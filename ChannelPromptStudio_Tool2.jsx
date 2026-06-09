@@ -121,6 +121,28 @@ function mapBlueprintToChannel(bp) {
   return { values: out, filledKeys: Object.keys(out) };
 }
 
+/* Ráp khối "DỮ LIỆU SEO THẬT" (từ Tool 5) để nhúng vào system prompt khi sinh.
+   Chỉ chèn trường thực sự có dữ liệu → tiết kiệm token. Không có seo → "". */
+function buildSeoBlock(seo) {
+  if (!seo || typeof seo !== "object") return "";
+  const lines = [];
+  const ai = seo.ai || {};
+  const prioKw = [...(seo.savedKeywords || []), ...(seo.keywordCandidates || [])].filter(Boolean);
+  if (prioKw.length) lines.push(`- Từ khoá ưu tiên (đưa vào title/description): ${prioKw.join(", ")}`);
+  if (Array.isArray(ai.titlePatterns) && ai.titlePatterns.length)
+    lines.push(`- Title pattern đã chứng minh hiệu quả: ${ai.titlePatterns.join(" | ")}`);
+  const tags = [...(ai.tags || []), ...(seo.realTags || [])].filter(Boolean);
+  if (tags.length) lines.push(`- Tag thật nên dùng: ${tags.join(", ")}`);
+  if (Array.isArray(ai.extraKeywords) && ai.extraKeywords.length)
+    lines.push(`- Long-tail tiềm năng: ${ai.extraKeywords.join(", ")}`);
+  if (seo.opportunity && typeof seo.opportunity.score === "number")
+    lines.push(`- Độ cạnh tranh: opportunity ${seo.opportunity.score}/100 (${seo.opportunity.level || "?"}).`);
+  if (!lines.length) return "";
+  return `\n# DỮ LIỆU SEO THẬT (từ nghiên cứu YouTube${seo.topic ? `, chủ đề "${seo.topic}"` : ""} - bám sát thay vì bịa)\n` +
+    lines.join("\n") +
+    `\nVới loại seo_title và description, BẮT BUỘC nhồi ít nhất 1 từ khoá ưu tiên vào 40 ký tự đầu.\n`;
+}
+
 /* trích JSON OBJECT (cho AI Fill) */
 function extractJSON(raw) {
   if (!raw) return null;
@@ -262,6 +284,7 @@ export default function ChannelPromptStudioTool2() {
   // ── Channel context (quản lý trực tiếp — gộp từ Module 1) ──
   const [channel, setChannel]     = useState({});
   const [blueprint, setBlueprint] = useState(null);
+  const [seoContext, setSeoContext] = useState(null); // SEO data từ Tool 5 (seo-data-*.json)
   const [cpName, setCpName]       = useState("channel-prompt-1");
 
   // AI Fill
@@ -304,6 +327,7 @@ export default function ChannelPromptStudioTool2() {
   const [toast, setToast] = useState({ msg: "", vis: false });
   const [err, setErr]     = useState("");
   const blueprintRef = useRef(null);
+  const seoRef = useRef(null);
   const cpRef   = useRef(null);
   const dupRef  = useRef(null);
   const rulesRef = useRef(null);
@@ -320,7 +344,7 @@ export default function ChannelPromptStudioTool2() {
       try { await window.storage?.set(STORAGE_KEY, JSON.stringify(buildCheckpoint())); } catch {}
     }, 800);
     return () => clearTimeout(t);
-  }, [channel, blueprint, prompts, refPrompts, quantities, syncMode, syncQty, syncSelected, customRules, patternsOn, models, modelId, thinkingOn, effortId, cpName]);
+  }, [channel, blueprint, seoContext, prompts, refPrompts, quantities, syncMode, syncQty, syncSelected, customRules, patternsOn, models, modelId, thinkingOn, effortId, cpName]);
 
   useEffect(() => {
     (async () => {
@@ -336,7 +360,7 @@ export default function ChannelPromptStudioTool2() {
     return {
       version: CHECKPOINT_VERSION, savedAt: new Date().toISOString(), name: cpName,
       config: { modelId, thinkingOn, effortId }, models,
-      channel, blueprint, quantities, prompts, refPrompts,
+      channel, blueprint, seoContext, quantities, prompts, refPrompts,
       sync: { syncMode, syncQty, syncSelected },
       customRules, patternsOn,
     };
@@ -354,6 +378,7 @@ export default function ChannelPromptStudioTool2() {
     else if (cp.context?.channel !== undefined) setChannel(cp.context.channel || {});
     if (cp.blueprint !== undefined) setBlueprint(cp.blueprint);
     else if (cp.context?.blueprint !== undefined) setBlueprint(cp.context.blueprint);
+    if (cp.seoContext !== undefined) setSeoContext(cp.seoContext); // tương thích ngược: file cũ không có → giữ null
     if (cp.quantities) setQuantities(q => ({ ...q, ...cp.quantities }));
     if (cp.sync) {
       setSyncMode(!!cp.sync.syncMode);
@@ -395,6 +420,24 @@ export default function ChannelPromptStudioTool2() {
     reader.onload = (ev) => {
       try { applyBlueprint(JSON.parse(ev.target.result)); }
       catch { setErr("File blueprint không phải JSON hợp lệ."); }
+    };
+    reader.readAsText(file); e.target.value = "";
+  }
+
+  /* ── import SEO data từ Tool 5 (seo-data-*.json) ── */
+  function applySeoData(data) {
+    if (!data || data.tool !== "tool5-seo-research")
+      throw new Error('File không phải SEO data của Tool 5 (thiếu tool === "tool5-seo-research").');
+    setSeoContext(data); setErr("");
+    const kwCount = (data.savedKeywords?.length || 0) + (data.keywordCandidates?.length || 0);
+    showToast(`Đã nạp SEO data: ${kwCount} từ khoá, ${data.realTags?.length || 0} tag thật`);
+  }
+  function handleSeoImport(e) {
+    const file = e.target.files?.[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try { applySeoData(JSON.parse(ev.target.result)); }
+      catch (err) { setErr(err?.message?.includes("SEO data") ? err.message : "File SEO không phải JSON hợp lệ."); }
     };
     reader.readAsText(file); e.target.value = "";
   }
@@ -570,14 +613,17 @@ export default function ChannelPromptStudioTool2() {
         `kể cả khi mâu thuẫn với mặc định:\n"""\n${customRules.content}\n"""\n`
       : "";
 
+    // Khối SEO thật (Tool 5) — nhúng vào system khi sinh; rỗng nếu chưa nạp SEO data
+    const seoBlock = buildSeoBlock(seoContext);
+
     let totalUsage = { input_tokens: 0, output_tokens: 0 };
     let stoppedEarly = false;
 
     try {
       if (syncMode) {
-        stoppedEarly = await runGenerateSync({ channelCtx, bpCtx, rulesBlock, totalUsage });
+        stoppedEarly = await runGenerateSync({ channelCtx, bpCtx, rulesBlock, seoBlock, totalUsage });
       } else {
-        stoppedEarly = await runGenerateNormal({ channelCtx, bpCtx, rulesBlock, totalUsage });
+        stoppedEarly = await runGenerateNormal({ channelCtx, bpCtx, rulesBlock, seoBlock, totalUsage });
       }
 
       const p = PRICING[modelId] || PRICING["claude-sonnet-4-6"];
@@ -597,7 +643,7 @@ export default function ChannelPromptStudioTool2() {
   }
 
   /* ── chế độ THƯỜNG: sinh theo lô từng loại (giữ nguyên logic cũ) ── */
-  async function runGenerateNormal({ channelCtx, bpCtx, rulesBlock, totalUsage }) {
+  async function runGenerateNormal({ channelCtx, bpCtx, rulesBlock, seoBlock, totalUsage }) {
     for (const t of PROMPT_TYPES) {
       if (cancelRef.current) break;
       const target = quantities[t.key] || 0;
@@ -633,6 +679,7 @@ export default function ChannelPromptStudioTool2() {
             `"Kỹ thuật gợi ý: <TÊN_PATTERN> (mô tả ngắn), ...". Chọn theo nội dung, không rập khuôn.`
           : "") +
         OUTPUT_HYGIENE +
+        seoBlock +
         rulesBlock;
 
       const user =
@@ -675,7 +722,7 @@ export default function ChannelPromptStudioTool2() {
   /* ── chế độ ĐỒNG BỘ: sinh TỪNG BỘ một (mỗi bộ 1 call trả 1 object) ──
      Bền hơn cách gộp: 1 object dễ parse hơn array nhiều bộ; token cấp rộng;
      một bộ hỏng chỉ skip bộ đó, các bộ khác vẫn vào kho. */
-  async function runGenerateSync({ channelCtx, bpCtx, rulesBlock, totalUsage }) {
+  async function runGenerateSync({ channelCtx, bpCtx, rulesBlock, seoBlock, totalUsage }) {
     const types = selectedSyncTypes;
     if (!types.length) { setErr("Hãy tích ít nhất một loại để đồng bộ."); return true; }
 
@@ -715,6 +762,7 @@ export default function ChannelPromptStudioTool2() {
             `Với loại văn bản (kịch bản/mô tả), thêm vào cuối prompt: "Kỹ thuật gợi ý: <3-4 TÊN_PATTERN phù hợp>".`
           : "") +
         OUTPUT_HYGIENE +
+        seoBlock +
         rulesBlock;
 
       const user =
@@ -941,7 +989,35 @@ export default function ChannelPromptStudioTool2() {
           )}
         </Section>
 
-        {/* A2 — CHANNEL SETTINGS (collapsible) */}
+        {/* A2 — IMPORT SEO DATA TỪ TOOL 5 */}
+        <Section icon={<FileJson size={15} />} title="A2 · Nạp SEO data từ Tool 5" tag="Input · tuỳ chọn">
+          {seoContext ? (
+            <div style={S.ctxCard}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 12, color: "#0d9488", fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                  <Check size={14} /> SEO: {seoContext.topic || "(không tên)"}
+                </span>
+                <button style={S.btnGhostSm} onClick={() => { setSeoContext(null); showToast("Đã gỡ SEO data"); }}><Trash2 size={12} /> Gỡ</button>
+              </div>
+              <div style={{ fontSize: 11.5, color: "#57534e", marginTop: 6, lineHeight: 1.7 }}>
+                {seoContext.opportunity && typeof seoContext.opportunity.score === "number" &&
+                  <div>Opportunity: <b>{seoContext.opportunity.score}/100</b> ({seoContext.opportunity.level || "?"})</div>}
+                <div>Từ khoá đã lưu: <b>{seoContext.savedKeywords?.length || 0}</b> · ứng viên: <b>{seoContext.keywordCandidates?.length || 0}</b> · tag thật: <b>{seoContext.realTags?.length || 0}</b></div>
+              </div>
+            </div>
+          ) : (
+            <div style={S.dropZone} onClick={() => seoRef.current?.click()}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0];
+                if (f) { const r = new FileReader(); r.onload = ev => { try { applySeoData(JSON.parse(ev.target.result)); } catch (err) { setErr(err?.message?.includes("SEO data") ? err.message : "JSON không hợp lệ"); } }; r.readAsText(f); } }}>
+              <Upload size={22} color="#a8a29e" />
+              <div style={{ marginTop: 6 }}>Click hoặc kéo thả file seo-data-*.json (từ Tool 5)</div>
+              <div style={{ fontSize: 11, color: "#a8a29e", marginTop: 2 }}>Nạp vào để prompt bám từ khoá + tag thật khi sinh</div>
+            </div>
+          )}
+        </Section>
+
+        {/* A3 — CHANNEL SETTINGS (collapsible) */}
         <Section icon={<Tags size={15} />} title="B · Thiết lập thông tin kênh"
           tag={`${CHANNEL_FIELDS.filter(f => { const v = channel[f.key]; return Array.isArray(v) ? v.length : !!v; }).length}/${CHANNEL_FIELDS.length} · OFFLINE + AI`}
           collapsible open={channelOpen} onToggle={() => setChannelOpen(o => !o)}>
@@ -1111,6 +1187,7 @@ export default function ChannelPromptStudioTool2() {
       </div>
 
       <input ref={blueprintRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleBlueprintImport} />
+      <input ref={seoRef} type="file" accept=".json" style={{ display: "none" }} onChange={handleSeoImport} />
       <input ref={cpRef}  type="file" accept=".json" style={{ display: "none" }} onChange={handleCpImport} />
       <input ref={dupRef} type="file" accept=".json,.md,.txt" style={{ display: "none" }} onChange={handleDupImport} />
       <input ref={rulesRef} type="file" accept=".md,.txt" style={{ display: "none" }} onChange={handleRulesImport} />
