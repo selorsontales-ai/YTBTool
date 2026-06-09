@@ -360,6 +360,16 @@ function fmtNum(n) {
   return String(n || 0);
 }
 
+/* Keyword dạng CÂU HỎI = search intent rõ → dễ viết title hook, CTR cao hơn.
+   Regex VI đã validate; EN bắt từ để hỏi đầu câu. */
+const QUESTION_RE_VI = /^(ai|gì|cái gì|điều gì|đâu|ở đâu|chỗ nào|nơi nào|khi nào|lúc nào|bao giờ|bao nhiêu|bao lâu|bao xa|mấy|mấy giờ|tại sao|vì sao|do đâu|thế nào|như thế nào|ra sao|làm sao|làm thế nào|cách nào|bằng cách nào|là gì|nghĩa là gì|có phải|liệu|nên|có nên|có thể)(?=\s|$|[?!.,:;])/i;
+const QUESTION_RE_EN = /^(who|what|how|why|when|where|which|whom|whose|can|should|does|do|is|are)\b/i;
+function isQuestionKw(kw, lang) {
+  const s = String(kw || "").trim();
+  if (!s) return false;
+  return (lang === "vi" ? QUESTION_RE_VI : QUESTION_RE_EN).test(s);
+}
+
 /* ════════════════════════════════════════════════════════════════════
    MAIN COMPONENT
    ════════════════════════════════════════════════════════════════════ */
@@ -1171,6 +1181,7 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
                       border: `1px solid ${isSaved(k.kw) ? C.tealDim : C.border}`,
                       color: isSaved(k.kw) ? "#03100e" : C.text, fontSize: 12.5, fontWeight: isSaved(k.kw) ? 600 : 400 }}>
                       {isSaved(k.kw) ? <Check size={12} /> : <Tag size={12} color={C.textDim} />}
+                      {isQuestionKw(k.kw, mk.lang) && <span title="Keyword dạng câu hỏi - intent rõ, dễ làm title hook">❓</span>}
                       {k.kw}
                       <span style={{ fontSize: 10, opacity: 0.6 }}>{k.count}</span>
                     </button>
@@ -1421,7 +1432,8 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
                             background: isSaved(k) ? C.tealDim : C.panel, fontFamily: FONT,
                             border: `1px solid ${isSaved(k) ? C.tealDim : C.border}`,
                             color: isSaved(k) ? "#03100e" : C.text, fontSize: 12 }}>
-                            {isSaved(k) ? <Check size={11} /> : <Tag size={11} color={C.blue} />}{k}
+                            {isSaved(k) ? <Check size={11} /> : <Tag size={11} color={C.blue} />}
+                            {isQuestionKw(k, mk.lang) && <span title="Câu hỏi - intent rõ">❓</span>}{k}
                           </button>
                         ))}
                       </div>
