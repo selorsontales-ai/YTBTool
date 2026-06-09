@@ -121,6 +121,35 @@ function mapBlueprintToChannel(bp) {
   return { values: out, filledKeys: Object.keys(out) };
 }
 
+/* Ráp khối "BLUEPRINT MỞ RỘNG" — làm nổi bật dữ liệu giàu của Tool 1 mà
+   mapBlueprintToChannel không đưa vào field kênh (ideas, hook, example_topics...).
+   Tuy bpCtx đã gửi cả blueprint, khối này nêu rõ để model dùng đúng chỗ.
+   Chỉ chèn trường có dữ liệu; thiếu trường → bỏ qua (tương thích blueprint cũ). */
+function buildBlueprintExtras(bp) {
+  if (!bp || typeof bp !== "object") return "";
+  const lines = [];
+  const ideas = Array.isArray(bp.first_10_video_ideas)
+    ? bp.first_10_video_ideas.map(x => (typeof x === "string" ? x : x?.title || x?.idea)).filter(Boolean)
+    : [];
+  if (ideas.length) lines.push(`- Ý tưởng video gốc (SEED ưu tiên cho loại kịch bản/video_script): ${ideas.join(" | ")}`);
+
+  const exTopics = Array.isArray(bp.content_pillars)
+    ? bp.content_pillars.flatMap(p => Array.isArray(p?.example_topics)
+        ? p.example_topics.map(t => `${p.title ? p.title + ": " : ""}${t}`) : []).filter(Boolean)
+    : [];
+  if (exTopics.length) lines.push(`- Chủ đề mẫu theo trụ cột: ${exTopics.slice(0, 30).join(" | ")}`);
+
+  const hook = bp.growth_strategy?.hook_formula;
+  if (hook) lines.push(`- Công thức mở bài (HOOK - dùng làm gợi ý câu mở đầu): ${typeof hook === "string" ? hook : JSON.stringify(hook)}`);
+
+  const adv = bp.competitive_advantages || bp.growth_strategy?.competitive_advantages;
+  const advArr = Array.isArray(adv) ? adv.filter(Boolean) : (adv ? [String(adv)] : []);
+  if (advArr.length) lines.push(`- Lợi thế cạnh tranh (nhấn vào để khác biệt): ${advArr.join(" | ")}`);
+
+  if (!lines.length) return "";
+  return `\n# BLUEPRINT MỞ RỘNG (Tool 1 - bám sát để prompt đúng định hướng kênh)\n` + lines.join("\n") + `\n`;
+}
+
 /* Ráp khối "DỮ LIỆU SEO THẬT" (từ Tool 5) để nhúng vào system prompt khi sinh.
    Chỉ chèn trường thực sự có dữ liệu → tiết kiệm token. Không có seo → "". */
 function buildSeoBlock(seo) {
@@ -615,15 +644,17 @@ export default function ChannelPromptStudioTool2() {
 
     // Khối SEO thật (Tool 5) — nhúng vào system khi sinh; rỗng nếu chưa nạp SEO data
     const seoBlock = buildSeoBlock(seoContext);
+    // Khối blueprint mở rộng (Tool 1) — làm nổi bật ideas/hook/example_topics
+    const bpExtrasBlock = buildBlueprintExtras(context?.blueprint);
 
     let totalUsage = { input_tokens: 0, output_tokens: 0 };
     let stoppedEarly = false;
 
     try {
       if (syncMode) {
-        stoppedEarly = await runGenerateSync({ channelCtx, bpCtx, rulesBlock, seoBlock, totalUsage });
+        stoppedEarly = await runGenerateSync({ channelCtx, bpCtx, rulesBlock, seoBlock, bpExtrasBlock, totalUsage });
       } else {
-        stoppedEarly = await runGenerateNormal({ channelCtx, bpCtx, rulesBlock, seoBlock, totalUsage });
+        stoppedEarly = await runGenerateNormal({ channelCtx, bpCtx, rulesBlock, seoBlock, bpExtrasBlock, totalUsage });
       }
 
       const p = PRICING[modelId] || PRICING["claude-sonnet-4-6"];
@@ -643,7 +674,7 @@ export default function ChannelPromptStudioTool2() {
   }
 
   /* ── chế độ THƯỜNG: sinh theo lô từng loại (giữ nguyên logic cũ) ── */
-  async function runGenerateNormal({ channelCtx, bpCtx, rulesBlock, seoBlock, totalUsage }) {
+  async function runGenerateNormal({ channelCtx, bpCtx, rulesBlock, seoBlock, bpExtrasBlock, totalUsage }) {
     for (const t of PROMPT_TYPES) {
       if (cancelRef.current) break;
       const target = quantities[t.key] || 0;
@@ -679,6 +710,7 @@ export default function ChannelPromptStudioTool2() {
             `"Kỹ thuật gợi ý: <TÊN_PATTERN> (mô tả ngắn), ...". Chọn theo nội dung, không rập khuôn.`
           : "") +
         OUTPUT_HYGIENE +
+        bpExtrasBlock +
         seoBlock +
         rulesBlock;
 
@@ -722,7 +754,7 @@ export default function ChannelPromptStudioTool2() {
   /* ── chế độ ĐỒNG BỘ: sinh TỪNG BỘ một (mỗi bộ 1 call trả 1 object) ──
      Bền hơn cách gộp: 1 object dễ parse hơn array nhiều bộ; token cấp rộng;
      một bộ hỏng chỉ skip bộ đó, các bộ khác vẫn vào kho. */
-  async function runGenerateSync({ channelCtx, bpCtx, rulesBlock, seoBlock, totalUsage }) {
+  async function runGenerateSync({ channelCtx, bpCtx, rulesBlock, seoBlock, bpExtrasBlock, totalUsage }) {
     const types = selectedSyncTypes;
     if (!types.length) { setErr("Hãy tích ít nhất một loại để đồng bộ."); return true; }
 
@@ -762,6 +794,7 @@ export default function ChannelPromptStudioTool2() {
             `Với loại văn bản (kịch bản/mô tả), thêm vào cuối prompt: "Kỹ thuật gợi ý: <3-4 TÊN_PATTERN phù hợp>".`
           : "") +
         OUTPUT_HYGIENE +
+        bpExtrasBlock +
         seoBlock +
         rulesBlock;
 

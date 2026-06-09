@@ -64,7 +64,7 @@ Một bộ 5 công cụ (React/JSX) hỗ trợ sản xuất nội dung YouTube *
 - [x] T3/T4: đổi separator MD `---` → `<!-- ARTICLE_BREAK -->` (T4 fallback `---` cho file cũ)
 - [x] T2: nút Import SEO data (T5) + nhúng seoContext vào system prompt
 - [ ] T2: bộ lọc 2 lớp + nút "Lọc & chuẩn hoá theo SEO"
-- [ ] T1→T2: map đầy đủ blueprint (ideas, hooks) thay vì chỉ title pillar
+- [x] T1→T2: map đầy đủ blueprint (ideas, hooks) thay vì chỉ title pillar (buildBlueprintExtras vào system prompt)
 - [ ] T2: chống trùng theo keyword cốt lõi (không chỉ norm(title))
 - [ ] T3: chế độ sản xuất theo setId (script trước → title/desc bám script)
 - [ ] T5 Tầng 1: comments mining + duration sweet-spot (client-side)
