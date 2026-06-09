@@ -34,7 +34,7 @@ Một bộ 5 công cụ (React/JSX) hỗ trợ sản xuất nội dung YouTube *
 
 **T3 → T4:** checkpoint `{ tool:"tool3-content-studio", prompts: [{..., result, controls, truncated, research}] }`, hoặc MD tách bài. T4 đọc `p.result` cho text. **MD separator hiện là `---` (dễ cắt nhầm — kế hoạch đổi sang `<!-- ARTICLE_BREAK -->`).**
 
-**T5 → T2:** `seo-data-*.json` `{ tool:"tool5-seo-research", version, topic, market, lang, opportunity{score,level,metrics}, savedKeywords[], keywordCandidates[], realTags[], ai{titlePatterns,tags,extraKeywords,descriptionTemplate} }`. **Hiện T2 CHƯA có đường nạp file này — đây là việc trọng tâm.**
+**T5 → T2:** `seo-data-*.json` `{ tool:"tool5-seo-research", version("tool5-seo-v2"), topic, market, lang, opportunity{score,level,metrics}, savedKeywords[]{kw,...}, keywordCandidates[](string), realTags[], ai{titlePatterns,tags,extraKeywords,descriptionTemplate,searchIntent,emotionalTrigger}, audiencePain[], contentGaps[], durationSweetSpot{minSec,maxSec,medianSec}, autocompleteLongTail[], transcriptInsights{commonStructure,gaps[]}, trend{direction,data[]}, redditSignals[], thumbnailConcept{commonPatterns,differentiationIdea}, channelProfile{audience,tone,niche} }`. T2 nạp qua nút "A2 · Nạp SEO data"; `buildSeoBlock` đọc các trường có. **Lưu ý: `savedKeywords` là mảng OBJECT `{kw}`, các keyword khác là string — dùng `seoKwStr()` chuẩn hoá.**
 
 ## 5. Quy tắc văn phong (áp cho mọi text sinh ra)
 

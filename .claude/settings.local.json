@@ -34,7 +34,8 @@
       "Bash(node -e \"const s=require\\('fs'\\).readFileSync\\('Tool5_SEO.jsx','utf8'\\); console.log\\('profileCtx calls:', \\(s.match\\(/profileCtx\\\\\\(\\\\\\)/g\\)||[]\\).length\\);\")",
       "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"Tool 5: Channel Profile \\(audience/tone/niche\\) nhúng vào mọi bước AI + export channelProfile\")",
       "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"Tool 5: AI Suggest thêm searchIntent + emotionalTrigger; Tool 2 đọc 2 trường này vào system prompt\")",
-      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"Tool 5: badge ❓ câu hỏi cho keyword candidates + autocomplete \\(regex VI/EN\\)\")"
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"Tool 5: badge ❓ câu hỏi cho keyword candidates + autocomplete \\(regex VI/EN\\)\")",
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"docs: ghi quyết định implement gợi ý Tool 5 + cập nhật contract T5->T2 trong CLAUDE.md\")"
     ]
   }
 }

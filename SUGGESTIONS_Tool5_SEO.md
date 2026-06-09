@@ -4,6 +4,17 @@
 
 ---
 
+## QUYẾT ĐỊNH IMPLEMENT (Claude Code, 2026-06-09)
+
+| # | Gợi ý | Quyết định |
+|---|---|---|
+| 2 | Channel Profile | ✅ Đã làm — state `profile{audience,tone,niche}`, nhúng `profileCtx()` vào 4 bước AI (AISuggest/Comments/Transcript/Thumbnail), lưu checkpoint + export `channelProfile`. |
+| 4 | Search intent + emotional trigger | ✅ Đã làm — thêm vào JSON `runAISuggest` (`searchIntent`,`emotionalTrigger`), hiện badge, export qua `ai`; Tool 2 `buildSeoBlock` đọc 2 trường này. |
+| 3 | Badge câu hỏi | ✅ Đã làm — `isQuestionKw()` (regex VI validated + EN), badge ❓ trên keyword candidates & autocomplete. |
+| 1 | yt-dlp toggle | ❌ Hoãn — chưa có kênh chạy nên quota chưa phải nút thắt; yt-dlp là dependency nặng + subprocess dễ gãy, backend chưa chạy thật. Làm lại khi quota thành vấn đề thật. |
+
+---
+
 ## 1. Toggle nguồn data: Google API ↔ yt-dlp
 
 ### Bối cảnh
