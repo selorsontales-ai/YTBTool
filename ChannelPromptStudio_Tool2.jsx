@@ -283,6 +283,24 @@ const normKw = (s) => String(s || "").toLowerCase()
   .normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d")
   .replace(/\s+/g, " ").trim();
 
+/* Stopword tối giản (VI đã bỏ dấu + EN) để rút keyword cốt lõi khỏi tiêu đề. */
+const SIG_STOP = new Set([
+  "va","la","cua","cho","cac","mot","nhung","de","trong","voi","khi","nay","da","duoc",
+  "co","khong","di","lam","ma","thi","cung","ra","vao","len","bang","nhu","sao","gi","nao",
+  "ban","toi","minh","cach","the","top","nhat","moi","rat","hon","khi","tai","va",
+  "how","to","of","for","and","or","the","a","an","in","on","with","what","why","you",
+  "your","is","are","this","that","best","tips","guide","video",
+]);
+
+/* Chữ ký keyword CỐT LÕI của tiêu đề: bỏ dấu + bỏ stopword + token >=3 ký tự,
+   khử trùng, sắp xếp, nối lại. Hai tiêu đề "trùng ý khác chữ" (đảo từ, thêm bớt
+   stopword) cho cùng chữ ký → chống trùng tốt hơn norm(title) thuần. */
+function coreSig(title) {
+  const toks = normKw(title).replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/)
+    .filter(w => w.length >= 3 && !SIG_STOP.has(w));
+  return [...new Set(toks)].sort().join(" ");
+}
+
 /* Gộp toàn bộ keyword SEO thật (Tool 5) thành 1 mảng duy nhất, đã khử trùng. */
 function collectSeoKeywords(seo) {
   if (!seo) return [];
@@ -772,11 +790,14 @@ export default function ChannelPromptStudioTool2() {
 
       setPrompts(prev => {
         const seen = new Set(prev.map(p => norm(p.title)));
+        // chống trùng theo keyword CỐT LÕI (trùng ý khác chữ), chỉ trong cùng loại
+        const seenSig = new Set(prev.filter(p => p.category === t.key).map(p => coreSig(p.title)).filter(Boolean));
         const add = [];
         for (const it of arr) {
           const title = String(it.title || it.prompt || "").slice(0, 120);
-          if (!title || seen.has(norm(title))) continue;
-          seen.add(norm(title));
+          const sig = coreSig(title);
+          if (!title || seen.has(norm(title)) || (sig && seenSig.has(sig))) continue;
+          seen.add(norm(title)); if (sig) seenSig.add(sig);
           add.push({ id: uid(), type: t.type, category: t.key, categoryLabel: t.label, title, prompt: String(it.prompt || it.text || "") });
         }
         return [...prev, ...add];
@@ -811,7 +832,13 @@ export default function ChannelPromptStudioTool2() {
 
     let madeAny = false;
     let failCount = 0;
+    let dupCount = 0;
     let lastRaw = "";
+    // chữ ký keyword cốt lõi của các bộ đã có — tích luỹ qua vòng lặp (không phụ
+    // thuộc setState bất đồng bộ) để chống trùng Ý giữa các bộ vừa sinh.
+    const usedSetSigs = new Set(
+      [...new Set(prompts.filter(p => p.setId).map(p => p.title))].map(coreSig).filter(Boolean)
+    );
 
     for (let i = 0; i < need; i++) {
       if (cancelRef.current) break;
@@ -863,11 +890,14 @@ export default function ChannelPromptStudioTool2() {
       if (!parsed) { failCount++; continue; }
 
       const videoTitle = String(parsed.videoTitle || parsed.title || `Bộ ${i + 1}`).slice(0, 120);
+      const sig = coreSig(videoTitle);
+      // bỏ qua bộ TRÙNG Ý (cùng keyword cốt lõi với bộ đã có) — tránh sản xuất lại
+      if (sig && usedSetSigs.has(sig)) { dupCount++; continue; }
+      if (sig) usedSetSigs.add(sig);
+
       const items = parsed.items || parsed;
       const setId = uid();
       setPrompts(prev => {
-        const seen = new Set(prev.map(p => norm(p.title)));
-        if (seen.has(norm(videoTitle))) { /* trùng → vẫn thêm nhưng đánh dấu khác */ }
         const add = [];
         for (const t of types) {
           const val = items[t.key];
@@ -883,10 +913,13 @@ export default function ChannelPromptStudioTool2() {
     }
 
     if (!madeAny) {
-      setErr(`Không sinh được bộ nào (${failCount}/${need} lỗi). Raw bộ cuối: ${lastRaw.slice(0, 200)}…`);
+      setErr(dupCount && !failCount
+        ? `Không thêm bộ mới: ${dupCount} bộ sinh ra TRÙNG Ý với bộ đã có. Đổi chủ đề hoặc tăng đa dạng.`
+        : `Không sinh được bộ nào (${failCount}/${need} lỗi). Raw bộ cuối: ${lastRaw.slice(0, 200)}…`);
       return true;
     }
-    if (failCount) setErr(`Đã sinh ${need - failCount}/${need} bộ mới; ${failCount} bộ lỗi đã bỏ qua.`);
+    if (failCount || dupCount) setErr(`Đã sinh ${need - failCount - dupCount}/${need} bộ mới` +
+      `${failCount ? `; ${failCount} bộ lỗi` : ""}${dupCount ? `; ${dupCount} bộ trùng ý đã bỏ` : ""}.`);
     return false;
   }
 
