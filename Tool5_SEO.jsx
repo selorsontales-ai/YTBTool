@@ -594,7 +594,9 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
   "titlePatterns": ["5-7 mẫu tiêu đề tối ưu CTR, bám từ khóa thật"],
   "tags": ["12-15 tag, trộn broad + long-tail, từ data thật + mở rộng hợp lý"],
   "extraKeywords": ["8-10 từ khóa long-tail tiềm năng chưa ai khai thác mạnh"],
-  "descriptionTemplate": "mẫu mô tả 150-200 từ: 2 câu đầu chứa từ khóa chính, có chỗ chèn timestamp, CTA, hashtag cuối"
+  "descriptionTemplate": "mẫu mô tả 150-200 từ: 2 câu đầu chứa từ khóa chính, có chỗ chèn timestamp, CTA, hashtag cuối",
+  "searchIntent": "một trong: informational | transactional | comparison | problem-solving (vì sao người ta tìm từ khóa này)",
+  "emotionalTrigger": "một trong: fear | curiosity | aspiration | social_proof | FOMO (cảm xúc thúc đẩy click)"
 }` + profileCtx();
       const user = `TỪ KHÓA GỐC: "${competition.keyword}"
 THỊ TRƯỜNG: ${mk.label}
@@ -619,6 +621,8 @@ ${allTags.slice(0, 15).join(", ")}`;
         tags: Array.isArray(parsed.tags) ? parsed.tags : [],
         extraKeywords: Array.isArray(parsed.extraKeywords) ? parsed.extraKeywords : [],
         descriptionTemplate: String(parsed.descriptionTemplate || ""),
+        searchIntent: String(parsed.searchIntent || ""),
+        emotionalTrigger: String(parsed.emotionalTrigger || ""),
       });
       setAiStream("");
       const c = costOf(modelId, usage); setCost(x => x + c);
@@ -1218,6 +1222,12 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
                       <div style={{ padding: "11px 14px", background: C.violet + "12", borderRadius: 10,
                         border: `1px solid ${C.violetDim}55`, fontSize: 13, lineHeight: 1.5 }}>
                         💡 {ai.opportunitySummary}
+                      </div>
+                    )}
+                    {(ai.searchIntent || ai.emotionalTrigger) && (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {ai.searchIntent && <Pill C={C} icon={<Target size={12} />} text={`intent: ${ai.searchIntent}`} color={C.blue} />}
+                        {ai.emotionalTrigger && <Pill C={C} icon={<Zap size={12} />} text={`cảm xúc: ${ai.emotionalTrigger}`} color={C.amber} />}
                       </div>
                     )}
                     {ai.titlePatterns?.length > 0 && (

@@ -170,6 +170,8 @@ function buildSeoBlock(seo) {
     lines.push(`- Long-tail tiềm năng: ${ai.extraKeywords.join(", ")}`);
   if (seo.opportunity && typeof seo.opportunity.score === "number")
     lines.push(`- Độ cạnh tranh: opportunity ${seo.opportunity.score}/100 (${seo.opportunity.level || "?"}).`);
+  if (ai.searchIntent) lines.push(`- Search intent (vì sao người ta tìm): ${ai.searchIntent} - bám đúng intent này khi viết title/mô tả.`);
+  if (ai.emotionalTrigger) lines.push(`- Đòn bẩy cảm xúc nên dùng: ${ai.emotionalTrigger}.`);
   // ── trường v2 (Tool 5 Tầng 1) — chỉ chèn khi có ──
   if (Array.isArray(seo.audiencePain) && seo.audiencePain.length)
     lines.push(`- Nỗi đau/câu hỏi khán giả (bám vào để chọn góc, mở bài): ${seo.audiencePain.join(" | ")}`);
