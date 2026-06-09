@@ -3,7 +3,7 @@ import {
   Search, Youtube, Cpu, Brain, Sparkles, Download, Upload, FileJson, Loader2, X, Check,
   AlertTriangle, TrendingUp, Tag, Type, FileText, Key, Eye, EyeOff, RefreshCw, Trash2,
   ChevronDown, ChevronRight, BarChart3, Target, Zap, Copy, ExternalLink, Award,
-  Flame, Clock, Users, Play, Save, ListChecks, Lightbulb,
+  Flame, Clock, Users, Play, Save, ListChecks, Lightbulb, Gauge, MessageSquare,
 } from "lucide-react";
 
 /* ════════════════════════════════════════════════════════════════════
@@ -45,7 +45,10 @@ const MARKETS = [
 
 const STORAGE_KEY = "tool5_seo_researcher_v1";
 const APIKEY_STORAGE = "tool5_youtube_apikey";
-const CHECKPOINT_VERSION = "tool5-seo-v1";
+const CHECKPOINT_VERSION = "tool5-seo-v2";
+const COMPAT_VERSIONS = new Set(["tool5-seo-v1", "tool5-seo-v2"]); // nạp được cả checkpoint cũ
+const YT_QUOTA_LIMIT = 10000; // units/ngày mặc định
+const YT_COST = { search: 100, videos: 1, channels: 1, comments: 1 }; // units mỗi call
 
 /* ════════════════════════════════════════════════════════════════════
    YOUTUBE DATA API v3 — helpers (client-side, key của user)
@@ -111,6 +114,47 @@ async function ytChannels(apiKey, channelIds) {
     });
   }
   return map;
+}
+
+/* commentThreads.list = 1 unit/call (rẻ). Trả mảng text top comment.
+   Ném lỗi "COMMENTS_DISABLED" nếu video tắt bình luận để caller bỏ qua gọn. */
+async function ytComments(apiKey, videoId, maxResults = 100) {
+  const url = `${YT_BASE}/commentThreads?part=snippet&videoId=${videoId}`
+    + `&maxResults=${maxResults}&order=relevance&textFormat=plainText&key=${apiKey}`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const t = await res.text();
+    if (res.status === 403 && /commentsDisabled|disabled comments/i.test(t)) {
+      const e = new Error("COMMENTS_DISABLED"); e.code = "COMMENTS_DISABLED"; throw e;
+    }
+    throw new Error(parseYTError(res.status, t));
+  }
+  const data = await res.json();
+  return (data.items || [])
+    .map(it => decodeHTML(it.snippet?.topLevelComment?.snippet?.textDisplay || ""))
+    .map(s => s.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
+
+/* ISO8601 duration (PT#H#M#S) → giây. "" / lỗi → 0. */
+function parseISO8601(iso) {
+  const m = String(iso || "").match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+  if (!m) return 0;
+  return (+(m[1] || 0)) * 3600 + (+(m[2] || 0)) * 60 + (+(m[3] || 0));
+}
+
+function fmtDuration(sec) {
+  sec = Math.round(sec || 0);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
+}
+
+/* Điểm ngọt độ dài: median + khoảng phổ biến (P25-P75) từ video có duration > 0. */
+function computeDurationSweetSpot(videos) {
+  const secs = (videos || []).map(v => parseISO8601(v.duration)).filter(s => s > 0).sort((a, b) => a - b);
+  if (secs.length < 3) return null;
+  const q = (p) => secs[Math.min(secs.length - 1, Math.floor(p * (secs.length - 1)))];
+  return { minSec: q(0.25), maxSec: q(0.75), medianSec: q(0.5), count: secs.length };
 }
 
 function parseYTError(status, text) {
@@ -325,6 +369,13 @@ export default function SEOResearcher() {
   // Saved keywords (user tick để gom vào export)
   const [savedKw, setSavedKw]     = useState([]); // [{kw, opportunity, level}]
 
+  // ── PROMPT 5: Tầng 1 (comments mining + duration + quota) ──
+  const [quotaUsed, setQuotaUsed]         = useState(0);   // units tiêu trong phiên
+  const [commentsBusy, setCommentsBusy]   = useState(false);
+  const [audiencePain, setAudiencePain]   = useState([]);  // câu hỏi/nỗi đau từ comment
+  const [contentGaps, setContentGaps]     = useState([]);  // chủ đề top chưa nhắc tới
+  const [durationSweetSpot, setDurationSweetSpot] = useState(null);
+
   // UI
   const [err, setErr]             = useState("");
   const [toast, setToast]         = useState("");
@@ -348,7 +399,7 @@ export default function SEOResearcher() {
         const s = await window.storage?.get(STORAGE_KEY);
         if (s?.value) {
           const snap = JSON.parse(s.value);
-          if (snap.version === CHECKPOINT_VERSION) applySnap(snap);
+          if (COMPAT_VERSIONS.has(snap.version)) applySnap(snap);
         }
       } catch {}
     })();
@@ -359,7 +410,8 @@ export default function SEOResearcher() {
     version: CHECKPOINT_VERSION, ts: Date.now(),
     seed, market, modelId, effortId, thinkingOn,
     videos, competition, keywordCands, allTags, ai, savedKw, cost,
-  }), [seed, market, modelId, effortId, thinkingOn, videos, competition, keywordCands, allTags, ai, savedKw, cost]);
+    quotaUsed, audiencePain, contentGaps, durationSweetSpot,
+  }), [seed, market, modelId, effortId, thinkingOn, videos, competition, keywordCands, allTags, ai, savedKw, cost, quotaUsed, audiencePain, contentGaps, durationSweetSpot]);
 
   function applySnap(s) {
     setSeed(s.seed || ""); setMarket(s.market || "VN");
@@ -369,7 +421,12 @@ export default function SEOResearcher() {
     setVideos(s.videos || []); setCompetition(s.competition || null);
     setKeywordCands(s.keywordCands || []); setAllTags(s.allTags || []);
     setAi(s.ai || null); setSavedKw(s.savedKw || []); setCost(s.cost || 0);
+    // các trường v2 — file v1 không có → mặc định an toàn
+    setQuotaUsed(s.quotaUsed || 0);
+    setAudiencePain(s.audiencePain || []); setContentGaps(s.contentGaps || []);
+    setDurationSweetSpot(s.durationSweetSpot || null);
   }
+  const bumpQuota = (n) => setQuotaUsed(x => x + n);
 
   // autosave state (trừ apiKey lưu riêng)
   useEffect(() => {
@@ -393,18 +450,27 @@ export default function SEOResearcher() {
     const kw = seed.trim();
     if (!kw) { setErr("Nhập chủ đề/từ khóa trước"); return; }
     if (!apiKey.trim()) { setErr("Chưa có YouTube API key — nhập ở mục trên cùng"); return; }
+    // cảnh báo nếu sắp vượt quota ngày (search = 100 + videos 1 + channels ~1)
+    if (quotaUsed + YT_COST.search > YT_QUOTA_LIMIT) {
+      if (!window.confirm(`Đã tiêu ${quotaUsed}/${YT_QUOTA_LIMIT} units hôm nay. Lượt này tốn ~${YT_COST.search}+ nữa, có thể hết quota. Vẫn chạy?`)) return;
+    }
     setBusy(true); setErr(""); setAi(null); setAiStream("");
+    setAudiencePain([]); setContentGaps([]); setDurationSweetSpot(null); // insight cũ thuộc từ khóa khác
     try {
       setPhase("search");
       const found = await ytSearch(apiKey, kw, { region: mk.region, lang: mk.lang, maxResults: 20 });
+      bumpQuota(YT_COST.search);
       setKeyValid(true);
       if (!found.length) { setErr("Không tìm thấy video nào cho từ khóa này"); setBusy(false); setPhase(""); return; }
 
       setPhase("videos");
       const stats = await ytVideos(apiKey, found.map(v => v.videoId));
+      bumpQuota(YT_COST.videos);
 
       setPhase("channels");
-      const chans = await ytChannels(apiKey, found.map(v => v.channelId));
+      const chanIds = [...new Set(found.map(v => v.channelId).filter(Boolean))];
+      const chans = await ytChannels(apiKey, chanIds);
+      bumpQuota(Math.max(1, Math.ceil(chanIds.length / 50)) * YT_COST.channels);
 
       setPhase("analyze");
       const merged = found.map(v => {
@@ -414,7 +480,7 @@ export default function SEOResearcher() {
           videoId: v.videoId, title: v.title, channelTitle: v.channelTitle,
           publishedAt: v.publishedAt, views: s.views || 0, likes: s.likes || 0,
           comments: s.comments || 0, tags: s.tags || [], subs: c.subs || 0,
-          hiddenSubs: c.hidden,
+          hiddenSubs: c.hidden, duration: s.duration || "",
         };
       }).sort((a, b) => b.views - a.views);
 
@@ -431,6 +497,7 @@ export default function SEOResearcher() {
       setCompetition({ ...comp, keyword: kw });
       setKeywordCands(cands);
       setAllTags(topTags);
+      setDurationSweetSpot(computeDurationSweetSpot(merged));
       setPhase("");
       showToast(`Phân tích xong ${merged.length} video · Opportunity ${comp.score}/100`);
     } catch (e) {
@@ -501,6 +568,65 @@ ${allTags.slice(0, 15).join(", ")}`;
     }
   }
 
+  /* ════════════════════════════════════════════════════════════════════
+     PROMPT 5 — COMMENTS MINING: đào top comment top video → Claude phân tích
+     nỗi đau khán giả + content gap. commentThreads.list = 1 unit/call (rẻ).
+     ════════════════════════════════════════════════════════════════════ */
+  async function runCommentsMining() {
+    if (commentsBusy || busy) return;
+    if (!competition || !videos.length) { setErr("Chạy nghiên cứu trước đã"); return; }
+    if (!apiKey.trim()) { setErr("Chưa có YouTube API key"); return; }
+
+    const targets = videos.slice(0, 8);
+    const estUnits = targets.length * YT_COST.comments;
+    if (!window.confirm(`Sẽ gọi commentThreads.list cho ${targets.length} video top (~${estUnits} unit quota). ` +
+      `Đã tiêu ${quotaUsed}/${YT_QUOTA_LIMIT} hôm nay. Tiếp tục?`)) return;
+    if (quotaUsed + estUnits > YT_QUOTA_LIMIT) {
+      if (!window.confirm("Có thể vượt quota ngày. Vẫn chạy?")) return;
+    }
+
+    setCommentsBusy(true); setErr("");
+    try {
+      const collected = []; // [{title, comments:[...]}]
+      let disabled = 0;
+      for (const v of targets) {
+        try {
+          const cmts = await ytComments(apiKey, v.videoId, 100);
+          bumpQuota(YT_COST.comments);
+          if (cmts.length) collected.push({ title: v.title, comments: cmts.slice(0, 60) });
+        } catch (e) {
+          if (e.code === "COMMENTS_DISABLED") { bumpQuota(YT_COST.comments); disabled++; continue; }
+          throw e; // lỗi khác (quota/key) → dừng
+        }
+      }
+      if (!collected.length) { setErr(`Không lấy được comment nào (${disabled} video tắt bình luận).`); setCommentsBusy(false); return; }
+
+      const corpus = collected.map(c =>
+        `### Video: ${c.title}\n${c.comments.map(x => "- " + x).join("\n")}`).join("\n\n").slice(0, 18000);
+
+      const sys = `Bạn là nhà phân tích khán giả YouTube cho thị trường ${mk.label}. Dưới đây là comment thật từ các video top đang rank cho từ khóa. Hãy đào insight.
+TRẢ JSON THUẦN, KHÔNG BACKTICKS:
+{
+  "audiencePain": ["6-10 câu hỏi CHƯA được giải đáp / lời phàn nàn lặp lại / mong muốn khán giả, viết bằng tiếng ${mk.lang === "vi" ? "Việt" : "Anh"}, cụ thể"],
+  "contentGaps": ["4-8 chủ đề/góc nhìn mà khán giả MUỐN nhưng video top CHƯA làm tốt - đây là cơ hội nội dung"]
+}`;
+      const user = `TỪ KHÓA: "${competition.keyword}"\n\nCOMMENT THẬT (${collected.length} video):\n${corpus}`;
+
+      const { text, usage } = await callClaude(sys, user, null,
+        { model: modelId, thinkingOn, effortId, maxTokens: 2500 });
+      const parsed = parseJSON(text);
+      if (!parsed) throw new Error("Không parse được kết quả AI");
+      setAudiencePain(Array.isArray(parsed.audiencePain) ? parsed.audiencePain : []);
+      setContentGaps(Array.isArray(parsed.contentGaps) ? parsed.contentGaps : []);
+      const c = costOf(modelId, usage); setCost(x => x + c);
+      showToast(`Đào comment xong: ${collected.length} video${disabled ? `, ${disabled} tắt bình luận` : ""} (+$${c.toFixed(4)})`);
+    } catch (e) {
+      setErr("Đào comment lỗi: " + String(e.message || e));
+    } finally {
+      setCommentsBusy(false);
+    }
+  }
+
   /* ── Lưu/bỏ từ khóa vào giỏ export ── */
   function toggleSaveKw(kw, opportunity, level) {
     setSavedKw(prev => prev.some(x => x.kw === kw)
@@ -525,6 +651,8 @@ ${allTags.slice(0, 15).join(", ")}`;
         keywordCandidates: keywordCands.slice(0, 20).map(k => k.kw),
         realTags: allTags,
         ai: ai || null,
+        // ── Tầng 1 (v2) — chỉ kèm khi có; Tool 2 đọc file v1 (thiếu các trường này) vẫn chạy ──
+        audiencePain, contentGaps, durationSweetSpot,
       };
       safeDownload(`seo-data-${(competition?.keyword || seed).replace(/\s+/g, "-").slice(0, 30)}-${Date.now()}.json`,
         JSON.stringify(out, null, 2), "application/json");
@@ -544,7 +672,7 @@ ${allTags.slice(0, 15).join(", ")}`;
     fr.onload = (e) => {
       try {
         const snap = JSON.parse(e.target.result);
-        if (snap.version !== CHECKPOINT_VERSION) throw new Error("File không phải checkpoint Tool 5");
+        if (!COMPAT_VERSIONS.has(snap.version)) throw new Error("File không phải checkpoint Tool 5");
         applySnap(snap);
         showToast("Đã khôi phục checkpoint");
       } catch (e2) { setErr("Import lỗi: " + e2.message); }
@@ -555,6 +683,8 @@ ${allTags.slice(0, 15).join(", ")}`;
   function clearAll() {
     setSeed(""); setVideos([]); setCompetition(null); setKeywordCands([]);
     setAllTags([]); setAi(null); setSavedKw([]); setCost(0); setErr("");
+    setAudiencePain([]); setContentGaps([]); setDurationSweetSpot(null);
+    // quotaUsed KHÔNG reset — nó phản ánh quota đã tiêu trong NGÀY, không theo phiên
     showToast("Đã xoá phiên");
   }
 
@@ -600,6 +730,8 @@ ${allTags.slice(0, 15).join(", ")}`;
             </div>
           </div>
           {cost > 0 && <Pill C={C} icon={<Sparkles size={13} />} text={`$${cost.toFixed(4)}`} color={C.amber} />}
+          {quotaUsed > 0 && <Pill C={C} icon={<Gauge size={13} />} text={`${quotaUsed}/${YT_QUOTA_LIMIT} units`}
+            color={quotaUsed > YT_QUOTA_LIMIT * 0.9 ? C.red : quotaUsed > YT_QUOTA_LIMIT * 0.7 ? C.amber : C.teal} />}
           {savedKw.length > 0 && <Pill C={C} icon={<Award size={13} />} text={`${savedKw.length} từ khóa đã lưu`} color={C.teal} />}
         </header>
 
@@ -748,6 +880,23 @@ ${allTags.slice(0, 15).join(", ")}`;
                 <div style={{ marginTop: 6, fontSize: 11, color: C.textDim }}>
                   🔥 = video "vượt size kênh" (view cao hơn sub nhiều, kênh nhỏ) — dấu hiệu từ khóa có lực kéo riêng, đáng nhắm.
                 </div>
+
+                {/* DURATION SWEET-SPOT */}
+                {durationSweetSpot && (
+                  <div style={{ marginTop: 12, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap",
+                    padding: "11px 14px", borderRadius: 12, background: C.panel, border: `1px solid ${C.border}` }}>
+                    <Clock size={18} color={C.blue} />
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: C.text }}>
+                        Điểm ngọt độ dài: {fmtDuration(durationSweetSpot.medianSec)}
+                        <span style={{ fontWeight: 400, color: C.textDim, fontSize: 12 }}> (median)</span>
+                      </div>
+                      <div style={{ fontSize: 11.5, color: C.textDim, marginTop: 2 }}>
+                        Khoảng phổ biến {fmtDuration(durationSweetSpot.minSec)} - {fmtDuration(durationSweetSpot.maxSec)} · từ {durationSweetSpot.count} video top
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -873,6 +1022,66 @@ ${allTags.slice(0, 15).join(", ")}`;
                       borderRadius: 8, background: "transparent", border: `1px solid ${C.border}`,
                       color: C.textDim, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>
                       <RefreshCw size={12} /> Tạo lại gợi ý
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ═══ PROMPT 5: COMMENTS MINING (nỗi đau khán giả + content gap) ═══ */}
+        {competition && (
+          <div className="t5-fade" style={{ marginTop: 18 }}>
+            <SectionHead C={C} icon={<MessageSquare size={16} color={C.amber} />} title="Đào comment - nỗi đau khán giả"
+              open={open.cmt !== false} onToggle={() => setOpen(o => ({ ...o, cmt: o.cmt === false }))} />
+            {open.cmt !== false && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 11.5, color: C.textDim, marginBottom: 10, lineHeight: 1.6 }}>
+                  Gọi top comment của 8 video đầu (commentThreads.list = 1 unit/video, rất rẻ) rồi để Claude đào: câu hỏi chưa được giải đáp, lời phàn nàn lặp lại, và content gap. Insight này là vàng cho ý tưởng video.
+                </div>
+                {(audiencePain.length === 0 && contentGaps.length === 0) && (
+                  <button onClick={runCommentsMining} disabled={commentsBusy} style={{
+                    display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderRadius: 10,
+                    background: commentsBusy ? C.panel2 : C.amber + "22", border: `1px solid ${C.amber}`, color: C.text,
+                    fontSize: 13.5, fontWeight: 600, cursor: commentsBusy ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {commentsBusy ? <Loader2 size={15} className="t5-spin" /> : <MessageSquare size={15} color={C.amber} />}
+                    {commentsBusy ? "Đang đào comment…" : `Đào comment (8 video, ~8 units)`}
+                  </button>
+                )}
+                {(audiencePain.length > 0 || contentGaps.length > 0) && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    {audiencePain.length > 0 && (
+                      <Block C={C} icon={<Users size={14} color={C.amber} />} title="Nỗi đau / câu hỏi khán giả">
+                        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                          {audiencePain.map((p, i) => (
+                            <div key={i} style={{ fontSize: 12.5, color: C.text, lineHeight: 1.5, paddingLeft: 14, position: "relative" }}>
+                              <span style={{ position: "absolute", left: 0, color: C.amber }}>•</span>{p}
+                            </div>
+                          ))}
+                        </div>
+                      </Block>
+                    )}
+                    {contentGaps.length > 0 && (
+                      <Block C={C} icon={<Zap size={14} color={C.green} />} title="Content gap (cơ hội nội dung)">
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+                          {contentGaps.map((g, i) => (
+                            <button key={i} onClick={() => toggleSaveKw(g, null, "")} style={{
+                              display: "flex", alignItems: "center", gap: 5, padding: "6px 11px", borderRadius: 9, cursor: "pointer",
+                              background: isSaved(g) ? C.tealDim : C.panel, fontFamily: FONT, textAlign: "left",
+                              border: `1px solid ${isSaved(g) ? C.tealDim : C.border}`,
+                              color: isSaved(g) ? "#03100e" : C.text, fontSize: 12 }}>
+                              {isSaved(g) ? <Check size={11} /> : <Zap size={11} color={C.green} />}{g}
+                            </button>
+                          ))}
+                        </div>
+                      </Block>
+                    )}
+                    <button onClick={runCommentsMining} disabled={commentsBusy} style={{
+                      alignSelf: "flex-start", display: "flex", alignItems: "center", gap: 6, padding: "7px 12px",
+                      borderRadius: 8, background: "transparent", border: `1px solid ${C.border}`,
+                      color: C.textDim, fontSize: 12, cursor: "pointer", fontFamily: FONT }}>
+                      <RefreshCw size={12} /> Đào lại
                     </button>
                   </div>
                 )}

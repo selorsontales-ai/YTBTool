@@ -166,6 +166,15 @@ function buildSeoBlock(seo) {
     lines.push(`- Long-tail tiềm năng: ${ai.extraKeywords.join(", ")}`);
   if (seo.opportunity && typeof seo.opportunity.score === "number")
     lines.push(`- Độ cạnh tranh: opportunity ${seo.opportunity.score}/100 (${seo.opportunity.level || "?"}).`);
+  // ── trường v2 (Tool 5 Tầng 1) — chỉ chèn khi có ──
+  if (Array.isArray(seo.audiencePain) && seo.audiencePain.length)
+    lines.push(`- Nỗi đau/câu hỏi khán giả (bám vào để chọn góc, mở bài): ${seo.audiencePain.join(" | ")}`);
+  if (Array.isArray(seo.contentGaps) && seo.contentGaps.length)
+    lines.push(`- Content gap chưa ai làm tốt (ưu tiên khai thác): ${seo.contentGaps.join(" | ")}`);
+  if (seo.durationSweetSpot && typeof seo.durationSweetSpot.medianSec === "number") {
+    const mm = Math.round(seo.durationSweetSpot.medianSec / 60);
+    lines.push(`- Độ dài video nên nhắm: ~${mm} phút (điểm ngọt của video top).`);
+  }
   if (!lines.length) return "";
   return `\n# DỮ LIỆU SEO THẬT (từ nghiên cứu YouTube${seo.topic ? `, chủ đề "${seo.topic}"` : ""} - bám sát thay vì bịa)\n` +
     lines.join("\n") +

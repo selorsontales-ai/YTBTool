@@ -10,7 +10,10 @@
       "Bash(node -e \"const s=require\\('fs'\\).readFileSync\\('ChannelPromptStudio_Tool2.jsx','utf8'\\); console.log\\('bpExtrasBlock count:', \\(s.match\\(/bpExtrasBlock/g\\)||[]\\).length\\); console.log\\('buildBlueprintExtras:', \\(s.match\\(/buildBlueprintExtras/g\\)||[]\\).length\\);\")",
       "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 4: map đầy đủ blueprint T1->T2 \\(ideas/hook/example_topics/advantages vào system prompt\\)\")",
       "Bash(node -e ' *)",
-      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 3: bộ lọc 2 lớp + 'Lọc & chuẩn hoá theo SEO' \\(Tool 2, ngưỡng 60, panel chờ xác nhận\\)\")"
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 3: bộ lọc 2 lớp + 'Lọc & chuẩn hoá theo SEO' \\(Tool 2, ngưỡng 60, panel chờ xác nhận\\)\")",
+      "Bash(esbuild Tool5_SEO.jsx --log-level=warning)",
+      "Read(//tmp/**)",
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 5: Tool 5 Tầng 1 - comments mining + duration sweet-spot + quota counter \\(export v2\\); T2 đọc trường v2\")"
     ]
   }
 }
