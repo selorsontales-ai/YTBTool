@@ -17,7 +17,10 @@
       "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 6: backend FastAPI \\(transcript + autocomplete\\) + Tool 5 nối backend; fix savedKeywords object->kw\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\('server/main.py',encoding='utf-8'\\).read\\(\\)\\); print\\('main.py OK'\\)\")",
       "Bash(py -c \"import ast; ast.parse\\(open\\('server/main.py',encoding='utf-8'\\).read\\(\\)\\); print\\('main.py OK'\\)\")",
-      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 7A: Tool 5 Tầng 3 - Reddit + Trends \\(backend\\) + thumbnail vision \\(client-side\\)\")"
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 7A: Tool 5 Tầng 3 - Reddit + Trends \\(backend\\) + thumbnail vision \\(client-side\\)\")",
+      "Bash(esbuild ReviewStudio_Tool4.jsx --log-level=warning)",
+      "Bash(node -e \"const s=require\\('fs'\\).readFileSync\\('ReviewStudio_Tool4.jsx','utf8'\\); console.log\\('critic refs:', \\(s.match\\(/critic/g\\)||[]\\).length\\); console.log\\('exportForTool2:', \\(s.match\\(/exportForTool2/g\\)||[]\\).length\\);\")",
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 7B: Tool 4 đóng vòng lặp - reviewer Phản biện + export Tái sản xuất \\(format Tool 2/3\\)\")"
     ]
   }
 }

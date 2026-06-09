@@ -86,6 +86,14 @@ const REVIEWERS = [
     required: true,
     description: "Số liệu, quote, claims — nghiêm ngặt hơn cho kênh y tế/sức khỏe",
   },
+  {
+    id: "critic",
+    label: "Phản biện",
+    icon: "Swords",
+    color: "#8b5cf6",
+    required: false,
+    description: "Thách thức luận điểm: lập luận yếu, thiếu phản đề, nhảy cóc logic",
+  },
 ];
 
 /* ─── SYSTEM PROMPTS cho từng reviewer ──
@@ -183,6 +191,39 @@ TRẢ LỜI BẰNG JSON THUẦN, KHÔNG BACKTICKS:
 ${strict ? "passed=true CHỈ khi không còn claim high nào chưa có nguồn." : "passed=true khi score>=7 và không có lỗi high."}
 Nếu bài không có claim: passed:true, score:10, issues:[].`;
   },
+
+  /* PHẢN BIỆN — đóng vai "luật sư của quỷ", thách thức ĐỘ CHẮC của lập luận
+     (không soi văn phong/dấu câu — đã có reviewer khác). Đây là vai mới giúp
+     đóng vòng lặp kiểm-duyệt → phản-biện → cải-thiện. */
+  critic: (lang, ctx = {}) => `Bạn là người PHẢN BIỆN nghiêm khắc ("luật sư của quỷ"). Ngôn ngữ bài: ${lang === "en" ? "tiếng Anh" : "tiếng Việt"}.${ctx.niche ? ` Lĩnh vực: ${ctx.niche}.` : ""}
+
+NHIỆM VỤ: Thách thức ĐỘ CHẮC của lập luận, KHÔNG bắt lỗi văn phong/chính tả/dấu câu (đã có bộ phận khác).
+Soi các điểm yếu sau, mỗi điểm = 1 issue, trích NGUYÊN VĂN đoạn lập luận yếu:
+- weak_argument: luận điểm nêu ra nhưng dẫn chứng/lý lẽ yếu, không thuyết phục.
+- logical_leap: nhảy cóc logic, kết luận không theo từ tiền đề (non-sequitur).
+- missing_counterargument: chỉ nêu một phía, bỏ qua phản đề/góc nhìn ngược hiển nhiên.
+- overgeneralization: khái quát hoá vội từ 1-2 ví dụ thành quy luật.
+- false_dichotomy: ép chỉ còn 2 lựa chọn trong khi còn lựa chọn khác.
+- unstated_assumption: dựa vào giả định ngầm chưa được nêu/chứng minh.
+- cherry_picking: chỉ chọn ví dụ có lợi, lờ trường hợp ngược.
+
+Với mỗi issue, "fix" = cách gia cố lập luận (thêm dẫn chứng/điều kiện, nêu phản đề rồi phản bác, thu hẹp phạm vi claim). Mục tiêu cuối: bài chặt chẽ hơn, không phải dài hơn.
+
+TRẢ LỜI BẰNG JSON THUẦN, KHÔNG BACKTICKS:
+{
+  "passed": boolean,
+  "score": 0-10 (10 = lập luận rất chắc, 0 = đầy lỗ hổng),
+  "summary": "1 câu nêu điểm yếu lập luận lớn nhất",
+  "issues": [
+    {
+      "type": "weak_argument|logical_leap|missing_counterargument|overgeneralization|false_dichotomy|unstated_assumption|cherry_picking|other",
+      "severity": "low|medium|high",
+      "excerpt": "đoạn lập luận NGUYÊN VĂN trong bài (copy chính xác, ≤120 ký tự)",
+      "fix": "đoạn viết lại để gia cố lập luận (giữ ý, chắc hơn). Rỗng nếu lỗi toàn cục."
+    }
+  ]
+}
+passed=true khi score>=7 và không có lỗi high. Bài lập luận chắc, đã lường phản đề: passed:true, score cao, issues ít.`,
 };
 
 /* ════════════════════════════════════════════════════════════════════
@@ -924,6 +965,37 @@ export default function ReviewStudio() {
       safeDownload(`tool4-output-${Date.now()}.json`, JSON.stringify(out, null, 2), "application/json");
       showToast(verdict === "PASSED" ? "Đã tải file cho Tool 5" : "Đã tải (bài chưa DUYỆT — kiểm tra lại)");
     } catch (e) { setErr("Export Tool 5 lỗi: " + e.message); }
+  }
+
+  // 5. ĐÓNG VÒNG LẶP — export bài đã duyệt thành prompt Tool 2 (Tool 3 cũng nhập được)
+  //    để TÁI SẢN XUẤT BIẾN THỂ. Format trùng exportJSON của Tool 2.
+  function exportForTool2() {
+    try {
+      const text = fixedText || inputText;
+      if (!text) { setErr("Chưa có bài để tái sản xuất"); return; }
+      const title = inputTitle || (text.split("\n").find(l => l.trim())?.slice(0, 80)) || "Bài đã duyệt";
+      const styleRule = effectiveLang === "vi"
+        ? "Viết hoa chuẩn tiếng Việt (KHÔNG Title Case), KHÔNG em-dash (dùng ' - '), hạn chế dấu hai chấm trong tiêu đề."
+        : "Sentence case, natural human voice.";
+      const prompt =
+        `Dưới đây là một bài ĐÃ ĐƯỢC DUYỆT chất lượng. Hãy viết một BIẾN THỂ MỚI cùng chủ đề: ` +
+        `giữ nguyên luận điểm cốt lõi và độ chính xác, nhưng ĐỔI góc tiếp cận, ví dụ minh hoạ, và cấu trúc mở bài để tránh trùng lặp. ` +
+        `Giữ độ dài tương đương. ${styleRule}\n\n` +
+        `# BÀI GỐC ĐÃ DUYỆT\n"""\n${text}\n"""`;
+      const payload = {
+        tool: "tool2-prompt-factory",
+        version: "tool4-reexport-v1",
+        exportedAt: new Date().toISOString(),
+        channel: null,
+        prompts: [{
+          id: `t4_${Date.now()}`, setId: null,
+          type: "text_generation", category: "video_script", categoryLabel: "Prompt Kịch bản Video",
+          title: `Biến thể: ${title}`, prompt,
+        }],
+      };
+      safeDownload(`tai-san-xuat-${Date.now()}.json`, JSON.stringify(payload, null, 2), "application/json");
+      showToast("Đã tải prompt tái sản xuất (nạp vào Tool 2 hoặc Tool 3)");
+    } catch (e) { setErr("Export tái sản xuất lỗi: " + e.message); }
   }
 
   /* ════════════════════════════════════════════════════════════════════
@@ -1745,6 +1817,11 @@ ${issueList}`;
                       onClick={exportCheckpoint} />
                     <SmallBtn C={C} icon={<Download size={12} />} label="Output cho Tool 5"
                       onClick={exportForTool5} />
+                    <SmallBtn C={C} icon={<RefreshCw size={12} />} label="Tái sản xuất (Tool 2/3)"
+                      onClick={exportForTool2} />
+                  </div>
+                  <div style={{ fontSize: 10.5, color: C.textDim, marginTop: 7, lineHeight: 1.5 }}>
+                    "Tái sản xuất" xuất bài duyệt thành prompt biến thể - nạp vào Tool 2 (kho prompt) hoặc Tool 3 (thực thi) để làm phiên bản mới cùng chủ đề.
                   </div>
                 </Card>
               )}

@@ -70,4 +70,4 @@ Một bộ 5 công cụ (React/JSX) hỗ trợ sản xuất nội dung YouTube *
 - [x] T5 Tầng 1: comments mining + duration sweet-spot + quota counter (client-side, export tool5-seo-v2; T2 đọc audiencePain/contentGaps/durationSweetSpot)
 - [x] T5 Tầng 2: backend transcript + autocomplete (FastAPI trong server/; Tool 5 có mục Backend URL + Kiểm tra; export thêm transcriptInsights/autocompleteLongTail)
 - [x] T5 Tầng 3: Reddit (public json) + Trends (pytrends) qua backend + thumbnail vision (client-side callClaudeVision); export trend/redditSignals/thumbnailConcept
-- [ ] T4: thêm vai phản biện; vòng lặp về T2/T3
+- [x] T4: thêm reviewer "Phản biện" (critic, thách thức lập luận) + nút "Tái sản xuất" export prompt biến thể format Tool 2 (Tool 3 nhập được)
