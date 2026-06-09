@@ -8,7 +8,9 @@
       "Bash(node -e \"const s=require\\('fs'\\).readFileSync\\('ChannelPromptStudio_Tool2.jsx','utf8'\\); ['FileJson','Check','Trash2','Upload'].forEach\\(i=>console.log\\(i, new RegExp\\('\\\\\\\\\\\\\\\\b'+i+'\\\\\\\\\\\\\\\\b'\\).test\\(s.split\\('export default'\\)[0]\\)?'imported':'MISSING'\\)\\); console.log\\('seoBlock uses:', \\(s.match\\(/seoBlock/g\\)||[]\\).length\\); console.log\\('buildSeoBlock def+call:', \\(s.match\\(/buildSeoBlock/g\\)||[]\\).length\\);\")",
       "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 2: Tool 2 import SEO data \\(T5\\) + nhúng seoContext vào system prompt khi sinh\")",
       "Bash(node -e \"const s=require\\('fs'\\).readFileSync\\('ChannelPromptStudio_Tool2.jsx','utf8'\\); console.log\\('bpExtrasBlock count:', \\(s.match\\(/bpExtrasBlock/g\\)||[]\\).length\\); console.log\\('buildBlueprintExtras:', \\(s.match\\(/buildBlueprintExtras/g\\)||[]\\).length\\);\")",
-      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 4: map đầy đủ blueprint T1->T2 \\(ideas/hook/example_topics/advantages vào system prompt\\)\")"
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 4: map đầy đủ blueprint T1->T2 \\(ideas/hook/example_topics/advantages vào system prompt\\)\")",
+      "Bash(node -e ' *)",
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 3: bộ lọc 2 lớp + 'Lọc & chuẩn hoá theo SEO' \\(Tool 2, ngưỡng 60, panel chờ xác nhận\\)\")"
     ]
   }
 }

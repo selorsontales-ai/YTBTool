@@ -264,6 +264,23 @@ function extractJSONArray(raw) {
 }
 const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
 
+/* Chuẩn hoá để KHỚP KEYWORD: lowercase + bỏ dấu tiếng Việt + gộp khoảng trắng.
+   Dùng cho bộ lọc SEO (so khớp không phân biệt hoa thường + dấu). */
+const normKw = (s) => String(s || "").toLowerCase()
+  .normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/đ/g, "d")
+  .replace(/\s+/g, " ").trim();
+
+/* Gộp toàn bộ keyword SEO thật (Tool 5) thành 1 mảng duy nhất, đã khử trùng. */
+function collectSeoKeywords(seo) {
+  if (!seo) return [];
+  const all = [
+    ...(seo.savedKeywords || []),
+    ...(seo.keywordCandidates || []),
+    ...(seo.ai?.extraKeywords || []),
+  ].map(k => String(k || "").trim()).filter(Boolean);
+  return [...new Set(all)];
+}
+
 /* Vớt vát: khi JSON array bị cắt giữa chừng (chạm token), quét từng object
    {...} cân bằng ngoặc ở tầng trên cùng và parse riêng. Trả về các bộ đọc được. */
 function salvageSets(raw) {
@@ -343,6 +360,13 @@ export default function ChannelPromptStudioTool2() {
   // prompt cũ (CHỈ để chống trùng — KHÔNG tính mục tiêu, KHÔNG export): [{title}]
   const [refPrompts, setRefPrompts] = useState([]);
 
+  // ── Lọc & chuẩn hoá theo SEO (PROMPT 3) ──
+  const [seoFilterBusy, setSeoFilterBusy] = useState(false);
+  const [seoFilterLog, setSeoFilterLog]   = useState("");
+  // prompt bị loại (score < ngưỡng) đang CHỜ xác nhận — không xoá vội
+  const [rejectedPrompts, setRejectedPrompts] = useState([]);
+  const SEO_KEEP_THRESHOLD = 60;
+
   // biến dẫn xuất để phần generate/export bên dưới dùng như cũ
   const context = { channel, blueprint };
 
@@ -373,7 +397,7 @@ export default function ChannelPromptStudioTool2() {
       try { await window.storage?.set(STORAGE_KEY, JSON.stringify(buildCheckpoint())); } catch {}
     }, 800);
     return () => clearTimeout(t);
-  }, [channel, blueprint, seoContext, prompts, refPrompts, quantities, syncMode, syncQty, syncSelected, customRules, patternsOn, models, modelId, thinkingOn, effortId, cpName]);
+  }, [channel, blueprint, seoContext, prompts, refPrompts, rejectedPrompts, quantities, syncMode, syncQty, syncSelected, customRules, patternsOn, models, modelId, thinkingOn, effortId, cpName]);
 
   useEffect(() => {
     (async () => {
@@ -389,7 +413,7 @@ export default function ChannelPromptStudioTool2() {
     return {
       version: CHECKPOINT_VERSION, savedAt: new Date().toISOString(), name: cpName,
       config: { modelId, thinkingOn, effortId }, models,
-      channel, blueprint, seoContext, quantities, prompts, refPrompts,
+      channel, blueprint, seoContext, quantities, prompts, refPrompts, rejectedPrompts,
       sync: { syncMode, syncQty, syncSelected },
       customRules, patternsOn,
     };
@@ -418,6 +442,7 @@ export default function ChannelPromptStudioTool2() {
     if (cp.patternsOn !== undefined) setPatternsOn(!!cp.patternsOn);
     if (Array.isArray(cp.prompts)) setPrompts(cp.prompts);
     if (Array.isArray(cp.refPrompts)) setRefPrompts(cp.refPrompts);
+    if (Array.isArray(cp.rejectedPrompts)) setRejectedPrompts(cp.rejectedPrompts); // file cũ không có → giữ []
     if (cp.name) setCpName(cp.name);
     if (!silent) showToast("Đã nạp checkpoint");
   }
@@ -856,9 +881,133 @@ export default function ChannelPromptStudioTool2() {
   /* ── kho prompt: xoá / sửa ── */
   function deletePrompt(id) { setPrompts(prev => prev.filter(p => p.id !== id)); }
   function clearPrompts() {
-    if (!prompts.length) return;
-    if (!window.confirm(`Xoá toàn bộ ${prompts.length} prompt?`)) return;
-    setPrompts([]); showToast("Đã xoá kho prompt");
+    if (!prompts.length && !rejectedPrompts.length) return;
+    if (!window.confirm(`Xoá toàn bộ ${prompts.length} prompt (và ${rejectedPrompts.length} prompt bị loại)?`)) return;
+    setPrompts([]); setRejectedPrompts([]); showToast("Đã xoá kho prompt");
+  }
+
+  /* ════════════════════════════════════════════════════════════════════
+     LỌC & CHUẨN HOÁ THEO SEO (PROMPT 3) — bộ lọc 2 lớp, 1 nút liền mạch
+     Lớp 1: cơ học (0 API) — đánh dấu _tooShort / _offSeo (không xoá).
+     Lớp 2: 1 call Claude/lô — chấm điểm + chuẩn hoá; keep=false → rejected.
+     ════════════════════════════════════════════════════════════════════ */
+
+  // Lớp 1 — đánh dấu cơ học. Trả về bản sao prompt kèm cờ _tooShort/_offSeo.
+  function mechanicalMark(p, seoKw) {
+    const isText = p.type !== "image_generation";
+    const body = String(p.prompt || "");
+    const tooShort = isText && body.trim().length < 40;
+    let offSeo = false;
+    if ((p.category === "seo_title" || p.category === "description") && seoKw.length) {
+      const hay = normKw(`${p.title} ${body}`);
+      offSeo = !seoKw.some(kw => kw && hay.includes(normKw(kw)));
+    }
+    return { ...p, _tooShort: tooShort, _offSeo: offSeo };
+  }
+
+  async function runSeoFilter(reCheck = false) {
+    if (seoFilterBusy || genBusy) return;
+    const pool = reCheck ? prompts : prompts.filter(p => !p._seoChecked);
+    if (!pool.length) {
+      setErr(reCheck ? "Không có prompt nào để chuẩn hoá." : "Mọi prompt đã được lọc. Dùng 'Chuẩn hoá lại tất cả' nếu muốn chạy lại.");
+      return;
+    }
+    setSeoFilterBusy(true); setErr(""); setSeoFilterLog("");
+
+    const seoKw = collectSeoKeywords(seoContext);
+    const seoBlock = buildSeoBlock(seoContext);
+    if (!seoContext) setSeoFilterLog("Chưa có SEO data — chỉ lọc cơ học + chấm chất lượng.");
+
+    // ── LỚP 1 ──
+    const marked = pool.map(p => mechanicalMark(p, seoKw));
+
+    // ── LỚP 2 — gộp lô ~18 prompt/call ──
+    const BATCH = 18;
+    const results = new Map(); // id -> {keep, score, reason, normalizedTitle, normalizedPrompt}
+    let usageTotal = { input_tokens: 0, output_tokens: 0 };
+    try {
+      for (let i = 0; i < marked.length; i += BATCH) {
+        if (cancelRef.current) break;
+        const batch = marked.slice(i, i + BATCH);
+        setSeoFilterLog(`Đang chấm điểm & chuẩn hoá ${Math.min(i + BATCH, marked.length)}/${marked.length} prompt…`);
+
+        const system =
+          `Bạn là biên tập viên SEO YouTube khó tính. Cho một LÔ prompt, hãy CHẤM ĐIỂM (0-100) độ bám SEO + chất lượng, ` +
+          `và CHUẨN HOÁ prompt đạt.\n` +
+          `Trả về DUY NHẤT một JSON ARRAY, KHÔNG giải thích, KHÔNG markdown fences. Mỗi phần tử:\n` +
+          `{ "id": "<id gốc>", "keep": true|false, "score": 0-100, "reason": "<ngắn gọn, tiếng Việt>", ` +
+          `"normalizedTitle": "<title đã chuẩn hoá>", "normalizedPrompt": "<prompt đã chuẩn hoá>" }\n` +
+          `Quy tắc chấm: keep=false nếu score < ${SEO_KEEP_THRESHOLD} (prompt yếu, lạc SEO, quá ngắn hoặc trùng ý).\n` +
+          `Quy tắc CHUẨN HOÁ (chỉ áp khi keep=true):\n` +
+          `- Với loại seo_title và description: nhồi ÍT NHẤT 1 từ khoá ưu tiên vào 40 KÝ TỰ ĐẦU của title.\n` +
+          `- Loại text: gắn 3-6 tag thật phù hợp vào CUỐI normalizedPrompt dạng "Tag gợi ý: a, b, c".\n` +
+          `- Giữ nguyên ngôn ngữ gốc của prompt (prompt ảnh giữ tiếng Anh).\n` +
+          OUTPUT_HYGIENE + seoBlock;
+
+        const user =
+          `# LÔ PROMPT CẦN CHẤM (mỗi prompt kèm cờ lọc cơ học để bạn tham khảo)\n` +
+          JSON.stringify(batch.map(p => ({
+            id: p.id, category: p.category, type: p.type, title: p.title, prompt: p.prompt,
+            _tooShort: p._tooShort, _offSeo: p._offSeo,
+          }))) +
+          `\n\nTrả JSON array đúng ${batch.length} phần tử, mỗi id một phần tử.`;
+
+        const { text, usage } = await callClaude(system, user, (pg) => setGenStream(pg), {
+          model: modelId, thinkingOn, effortId, maxTokens: Math.min(2000 + batch.length * 700, 32000),
+        });
+        if (usage) { usageTotal.input_tokens += usage.input_tokens || 0; usageTotal.output_tokens += usage.output_tokens || 0; }
+
+        const arr = extractJSONArray(text);
+        if (!arr) { setErr(`Một lô trả về không đọc được JSON — bỏ qua lô đó, các lô khác vẫn áp dụng.`); continue; }
+        for (const r of arr) { if (r?.id) results.set(String(r.id), r); }
+      }
+
+      // ── ÁP KẾT QUẢ (tính đồng bộ từ `prompts` + `results`, rồi mới setState) ──
+      const kept = [];
+      const newlyRejected = [];
+      for (const p of prompts) {
+        const r = results.get(String(p.id));
+        if (!r) { kept.push(p); continue; } // ngoài pool (đã check trước) hoặc lô lỗi → giữ nguyên
+        const score = typeof r.score === "number" ? r.score : 0;
+        const keep = r.keep !== false && score >= SEO_KEEP_THRESHOLD;
+        if (!keep) { newlyRejected.push({ ...p, _seoScore: score, _seoReason: String(r.reason || "") }); continue; }
+        kept.push({
+          ...p,
+          title: r.normalizedTitle?.trim() ? String(r.normalizedTitle).slice(0, 120) : p.title,
+          prompt: r.normalizedPrompt?.trim() ? String(r.normalizedPrompt) : p.prompt,
+          _seoChecked: true, _seoScore: score, _seoReason: String(r.reason || ""),
+        });
+      }
+      const keptCheckedCount = kept.filter(p => results.has(String(p.id))).length;
+      setPrompts(kept);
+      if (newlyRejected.length) setRejectedPrompts(prev => [...prev, ...newlyRejected]);
+
+      const p = PRICING[modelId] || PRICING["claude-sonnet-4-6"];
+      const cost = (usageTotal.input_tokens * p.input + usageTotal.output_tokens * p.output) / 1e6;
+      setLastUsage({ ...usageTotal, cost });
+      setSeoFilterLog(`Xong: giữ ${keptCheckedCount}, loại ${newlyRejected.length} (chờ xác nhận). (+$${cost.toFixed(4)})`);
+      showToast(`Lọc SEO xong: giữ ${keptCheckedCount}, loại ${newlyRejected.length}`);
+    } catch (e) {
+      setErr("Lọc SEO lỗi: " + String(e.message || e));
+    } finally {
+      setSeoFilterBusy(false); setGenStream("");
+    }
+  }
+
+  // Khôi phục 1 prompt bị loại về kho (gỡ cờ loại, đánh dấu đã check thủ công).
+  function restoreRejected(id) {
+    setRejectedPrompts(prev => {
+      const found = prev.find(p => p.id === id);
+      if (found) {
+        const { _seoReason, ...rest } = found;
+        setPrompts(pl => [...pl, { ...rest, _seoChecked: true }]);
+      }
+      return prev.filter(p => p.id !== id);
+    });
+    showToast("Đã khôi phục prompt");
+  }
+  function dropRejected(id) {
+    setRejectedPrompts(prev => prev.filter(p => p.id !== id));
   }
   async function copyPrompt(text) {
     try { await navigator.clipboard.writeText(text); }
@@ -1190,7 +1339,7 @@ export default function ChannelPromptStudioTool2() {
 
         {/* C — KHO PROMPT */}
         <Section icon={<Factory size={15} />} title={`D · Kho Prompt (${prompts.length})`} tag={`text:${byType.text} · image:${byType.image}`}>
-          {prompts.length === 0 ? (
+          {prompts.length === 0 && rejectedPrompts.length === 0 ? (
             <div style={S.empty}>Chưa có prompt nào. Chọn loại & số lượng ở trên rồi bấm "Tạo Prompt".</div>
           ) : (
             <>
@@ -1199,12 +1348,37 @@ export default function ChannelPromptStudioTool2() {
                 <button style={S.btnPrimaryOutline} onClick={exportMD}><FileText size={14} /> Export MD</button>
                 <button style={S.btnGhost} onClick={clearPrompts}><Trash2 size={14} /> Xoá hết</button>
               </div>
+
+              {/* ── LỌC & CHUẨN HOÁ THEO SEO (PROMPT 3) ── */}
+              {prompts.length > 0 && (
+                <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", marginBottom: 10,
+                  padding: "8px 10px", background: "#f5f3ff", border: "1px solid #ede9fe", borderRadius: 8 }}>
+                  <button style={{ ...S.btnPrimary, opacity: (seoFilterBusy || genBusy) ? 0.6 : 1 }}
+                    disabled={seoFilterBusy || genBusy}
+                    onClick={() => runSeoFilter(false)}>
+                    {seoFilterBusy ? <Loader2 size={14} className="spin" /> : <Wand2 size={14} />}
+                    {seoFilterBusy ? "Đang lọc…" : "Lọc & chuẩn hoá theo SEO"}
+                  </button>
+                  {prompts.some(p => p._seoChecked) && !seoFilterBusy && (
+                    <span style={{ fontSize: 12, color: "#7c3aed", cursor: "pointer", textDecoration: "underline" }}
+                      onClick={() => runSeoFilter(true)}>Chuẩn hoá lại tất cả</span>
+                  )}
+                  {!seoContext && <span style={{ fontSize: 11.5, color: "#b45309" }}>chưa có SEO data - chỉ lọc cơ học + chấm chất lượng</span>}
+                  {seoFilterLog && <span style={{ fontSize: 11.5, color: "#57534e" }}>{seoFilterLog}</span>}
+                </div>
+              )}
+              {seoFilterBusy && genStream && <pre style={S.streamPre}>{genStream.slice(-400)}</pre>}
+
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 {prompts.map(p => (
                   <div key={p.id} style={{ ...S.promptCard, ...(p.setId ? { borderLeft: `3px solid ${setColor(p.setId)}` } : {}) }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
                       {p.type === "image_generation" ? <ImageIcon size={13} color="#7c3aed" /> : <FileText size={13} color="#0d9488" />}
                       <span style={{ fontSize: 12.5, fontWeight: 600, flex: 1 }}>{p.title}</span>
+                      {p._seoChecked && <span style={{ fontSize: 10.5, fontWeight: 700, padding: "1px 6px", borderRadius: 5,
+                        background: p._seoScore >= 80 ? "#dcfce7" : "#fef9c3", color: p._seoScore >= 80 ? "#15803d" : "#a16207" }}
+                        title={p._seoReason}>SEO {p._seoScore}</span>}
+                      {p._offSeo && <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 5, background: "#fee2e2", color: "#b91c1c" }}>off-SEO</span>}
                       {p.setId && <span style={{ ...S.setTag, background: setColor(p.setId) + "1a", color: setColor(p.setId) }}>BỘ</span>}
                       <span style={{ ...S.typeTagSm, color: p.type === "image_generation" ? "#7c3aed" : "#0d9488" }}>{p.categoryLabel}</span>
                       <Copy size={13} style={{ cursor: "pointer", color: "#a8a29e" }} onClick={() => copyPrompt(p.prompt)} />
@@ -1214,6 +1388,33 @@ export default function ChannelPromptStudioTool2() {
                   </div>
                 ))}
               </div>
+
+              {/* ── PANEL: BỊ LOẠI (CHỜ XÁC NHẬN) ── */}
+              {rejectedPrompts.length > 0 && (
+                <div style={{ marginTop: 14, padding: "10px 12px", background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 9 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 8 }}>
+                    <Ban size={14} color="#b45309" />
+                    <span style={{ fontSize: 12.5, fontWeight: 700, color: "#b45309", flex: 1 }}>Bị loại - chờ xác nhận ({rejectedPrompts.length})</span>
+                    <span style={{ fontSize: 11, color: "#92400e", cursor: "pointer" }}
+                      onClick={() => { if (window.confirm(`Xoá hẳn ${rejectedPrompts.length} prompt bị loại?`)) setRejectedPrompts([]); }}>Xoá hẳn tất cả</span>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                    {rejectedPrompts.map(p => (
+                      <div key={p.id} style={{ ...S.promptCard, background: "#fff", opacity: 0.92 }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                          <span style={{ fontSize: 10.5, fontWeight: 700, padding: "1px 6px", borderRadius: 5, background: "#fee2e2", color: "#b91c1c" }}>SEO {p._seoScore}</span>
+                          <span style={{ fontSize: 12.5, fontWeight: 600, flex: 1 }}>{p.title}</span>
+                          <span style={{ ...S.typeTagSm, color: p.type === "image_generation" ? "#7c3aed" : "#0d9488" }}>{p.categoryLabel}</span>
+                          <span style={{ fontSize: 11, color: "#0d9488", cursor: "pointer", fontWeight: 600 }} onClick={() => restoreRejected(p.id)}>Khôi phục</span>
+                          <span style={{ fontSize: 11, color: "#dc2626", cursor: "pointer", fontWeight: 600 }} onClick={() => dropRejected(p.id)}>Xoá hẳn</span>
+                        </div>
+                        {p._seoReason && <div style={{ fontSize: 11.5, color: "#92400e", marginBottom: 4, fontStyle: "italic" }}>Lý do: {p._seoReason}</div>}
+                        <div style={S.promptBody}>{p.prompt}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </>
           )}
         </Section>
