@@ -98,6 +98,78 @@ async def autocomplete(
     return {"q": q, "lang": lang, "suggestions": suggestions}
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# REDDIT (Tầng 3) — top post công khai theo chủ đề. Dùng endpoint .json công
+# khai (read-only, không cần OAuth), chỉ cần User-Agent. Rate-limit nhẹ.
+# Độc lập: lỗi ở đây không ảnh hưởng các endpoint khác.
+# ──────────────────────────────────────────────────────────────────────────
+@app.get("/reddit")
+async def reddit(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(15, ge=1, le=50),
+):
+    url = "https://www.reddit.com/search.json"
+    params = {"q": q, "sort": "top", "t": "year", "limit": limit}
+    headers = {"User-Agent": "tool5-seo-research/1.0 (read-only)"}
+    try:
+        async with httpx.AsyncClient(timeout=10, headers=headers) as client:
+            r = await client.get(url, params=params)
+            r.raise_for_status()
+            data = r.json()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Không gọi được Reddit: {type(e).__name__}: {e}")
+
+    posts = []
+    for child in (data.get("data", {}).get("children", []) or []):
+        d = child.get("data", {})
+        posts.append({
+            "title": d.get("title", ""),
+            "subreddit": d.get("subreddit", ""),
+            "score": d.get("score", 0),
+            "numComments": d.get("num_comments", 0),
+            "url": f"https://reddit.com{d.get('permalink', '')}",
+        })
+    posts.sort(key=lambda p: p["score"], reverse=True)
+    return {"q": q, "posts": posts}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# GOOGLE TRENDS (Tầng 3) — hướng quan tâm qua pytrends (scraping, có thể gãy).
+# Optional: nếu chưa cài pytrends → trả lỗi rõ ràng, không crash server.
+# ──────────────────────────────────────────────────────────────────────────
+@app.get("/trends")
+def trends(
+    q: str = Query(..., min_length=1),
+    geo: str = Query("", description="Mã quốc gia, vd VN, US. Rỗng = toàn cầu."),
+):
+    try:
+        from pytrends.request import TrendReq
+    except ImportError:
+        raise HTTPException(501, "Chưa cài pytrends (optional). Chạy: pip install pytrends")
+    try:
+        py = TrendReq(hl="en-US", tz=0)
+        py.build_payload([q], timeframe="today 12-m", geo=geo)
+        df = py.interest_over_time()
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(502, f"Trends lỗi: {type(e).__name__}: {e}")
+
+    if df is None or df.empty or q not in df:
+        return {"q": q, "direction": "unknown", "data": []}
+    series = [int(x) for x in df[q].tolist()]
+    # so trung bình nửa cuối với nửa đầu để suy hướng
+    half = max(1, len(series) // 2)
+    first, second = series[:half], series[half:]
+    avg_first = sum(first) / len(first) if first else 0
+    avg_second = sum(second) / len(second) if second else 0
+    if avg_second > avg_first * 1.15:
+        direction = "rising"
+    elif avg_second < avg_first * 0.85:
+        direction = "falling"
+    else:
+        direction = "stable"
+    return {"q": q, "direction": direction, "data": series}
+
+
 if __name__ == "__main__":
     import uvicorn
 

@@ -310,6 +310,31 @@ async function callClaude(system, user, onChunk, cfg = {}) {
   return { text: full, usage };
 }
 
+/* Như callClaude nhưng đính kèm ẢNH (thumbnail) vào message để Claude vision
+   phân tích. imageUrls: mảng URL ảnh công khai. Không stream (gọn). */
+async function callClaudeVision(system, textPrompt, imageUrls, cfg = {}) {
+  const { model = "claude-sonnet-4-6", thinkingOn = false, effortId = "medium", maxTokens = 2000 } = cfg;
+  const content = [
+    ...imageUrls.map(u => ({ type: "image", source: { type: "url", url: u } })),
+    { type: "text", text: textPrompt },
+  ];
+  const body = {
+    model, max_tokens: maxTokens, system,
+    messages: [{ role: "user", content }],
+    output_config: { effort: effortId },
+  };
+  if (thinkingOn && modelSupportsThinking(model)) body.thinking = { type: "adaptive" };
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "anthropic-beta": "effort-2025-11-24" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`API ${res.status}: ${(await res.text()).slice(0, 160)}`);
+  const data = await res.json();
+  const text = (data.content || []).filter(b => b.type === "text").map(b => b.text).join("");
+  return { text, usage: data.usage };
+}
+
 function parseJSON(raw) {
   if (!raw) return null;
   let s = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```\s*$/, "");
@@ -385,6 +410,14 @@ export default function SEOResearcher() {
   const [autocompleteBusy, setAutocompleteBusy]     = useState(false);
   const [autocompleteLongTail, setAutocompleteLongTail] = useState([]);
 
+  // ── PROMPT 7 (Tầng 3): Reddit + Trends (backend) + thumbnail vision (client) ──
+  const [redditBusy, setRedditBusy]       = useState(false);
+  const [redditSignals, setRedditSignals] = useState([]); // [{title, subreddit, score, url}]
+  const [trendBusy, setTrendBusy]         = useState(false);
+  const [trend, setTrend]                 = useState(null); // {direction, data[]}
+  const [thumbBusy, setThumbBusy]         = useState(false);
+  const [thumbnailConcept, setThumbnailConcept] = useState(null); // {commonPatterns, differentiationIdea}
+
   // UI
   const [err, setErr]             = useState("");
   const [toast, setToast]         = useState("");
@@ -421,7 +454,8 @@ export default function SEOResearcher() {
     videos, competition, keywordCands, allTags, ai, savedKw, cost,
     quotaUsed, audiencePain, contentGaps, durationSweetSpot,
     backendUrl, transcriptInsights, autocompleteLongTail,
-  }), [seed, market, modelId, effortId, thinkingOn, videos, competition, keywordCands, allTags, ai, savedKw, cost, quotaUsed, audiencePain, contentGaps, durationSweetSpot, backendUrl, transcriptInsights, autocompleteLongTail]);
+    redditSignals, trend, thumbnailConcept,
+  }), [seed, market, modelId, effortId, thinkingOn, videos, competition, keywordCands, allTags, ai, savedKw, cost, quotaUsed, audiencePain, contentGaps, durationSweetSpot, backendUrl, transcriptInsights, autocompleteLongTail, redditSignals, trend, thumbnailConcept]);
 
   function applySnap(s) {
     setSeed(s.seed || ""); setMarket(s.market || "VN");
@@ -438,6 +472,8 @@ export default function SEOResearcher() {
     if (s.backendUrl) setBackendUrl(s.backendUrl);
     setTranscriptInsights(s.transcriptInsights || null);
     setAutocompleteLongTail(s.autocompleteLongTail || []);
+    setRedditSignals(s.redditSignals || []); setTrend(s.trend || null);
+    setThumbnailConcept(s.thumbnailConcept || null);
   }
   const bumpQuota = (n) => setQuotaUsed(x => x + n);
 
@@ -722,6 +758,72 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
     }
   }
 
+  /* ════════════════════════════════════════════════════════════════════
+     PROMPT 7 (Tầng 3) — Reddit + Trends (qua backend) + Thumbnail Vision.
+     Mỗi nguồn độc lập: hỏng một cái không ảnh hưởng các phần khác.
+     ════════════════════════════════════════════════════════════════════ */
+  async function runReddit() {
+    if (redditBusy) return;
+    const q = (competition?.keyword || seed).trim();
+    if (!q) { setErr("Nhập chủ đề trước"); return; }
+    setRedditBusy(true); setErr("");
+    try {
+      const r = await fetch(`${apiBase()}/reddit?q=${encodeURIComponent(q)}&limit=15`);
+      if (!r.ok) throw new Error(`Backend ${r.status}`);
+      const d = await r.json();
+      setRedditSignals(d.posts || []);
+      showToast(`Reddit: ${d.posts?.length || 0} post`);
+    } catch (e) {
+      setErr("Reddit lỗi: " + String(e.message || e) + ` (backend tại ${apiBase()} có chạy không?)`);
+    } finally { setRedditBusy(false); }
+  }
+
+  async function runTrends() {
+    if (trendBusy) return;
+    const q = (competition?.keyword || seed).trim();
+    if (!q) { setErr("Nhập chủ đề trước"); return; }
+    setTrendBusy(true); setErr("");
+    try {
+      const r = await fetch(`${apiBase()}/trends?q=${encodeURIComponent(q)}&geo=${mk.region || ""}`);
+      if (!r.ok) {
+        const t = await r.json().catch(() => ({}));
+        throw new Error(t.detail || `Backend ${r.status}`);
+      }
+      const d = await r.json();
+      setTrend({ direction: d.direction || "unknown", data: d.data || [] });
+      showToast(`Trends: ${d.direction}`);
+    } catch (e) {
+      setErr("Trends lỗi: " + String(e.message || e));
+    } finally { setTrendBusy(false); }
+  }
+
+  async function runThumbnailVision() {
+    if (thumbBusy) return;
+    if (!videos.length) { setErr("Chạy nghiên cứu trước đã"); return; }
+    setThumbBusy(true); setErr("");
+    try {
+      const urls = videos.slice(0, 5).map(v => `https://i.ytimg.com/vi/${v.videoId}/hqdefault.jpg`);
+      const sys = `Bạn là chuyên gia thiết kế thumbnail YouTube. Phân tích ${urls.length} thumbnail của video TOP đang rank.
+TRẢ JSON THUẦN, KHÔNG BACKTICKS:
+{
+  "commonPatterns": "mô tả 3-5 câu: màu sắc, bố cục, biểu cảm khuôn mặt, text overlay, phong cách CHUNG mà các thumbnail top dùng",
+  "differentiationIdea": "1 concept thumbnail TƯƠNG PHẢN để nổi bật giữa đám đông này (màu/bố cục/góc tiếp cận khác biệt)"
+}`;
+      const { text, usage } = await callClaudeVision(sys, `Từ khóa: "${competition?.keyword || seed}". Phân tích các thumbnail đính kèm.`,
+        urls, { model: modelId, thinkingOn, effortId, maxTokens: 1500 });
+      const parsed = parseJSON(text);
+      if (!parsed) throw new Error("Không parse được kết quả AI");
+      setThumbnailConcept({
+        commonPatterns: String(parsed.commonPatterns || ""),
+        differentiationIdea: String(parsed.differentiationIdea || ""),
+      });
+      const c = costOf(modelId, usage); setCost(x => x + c);
+      showToast(`Phân tích thumbnail xong (+$${c.toFixed(4)})`);
+    } catch (e) {
+      setErr("Thumbnail vision lỗi: " + String(e.message || e));
+    } finally { setThumbBusy(false); }
+  }
+
   /* ── Lưu/bỏ từ khóa vào giỏ export ── */
   function toggleSaveKw(kw, opportunity, level) {
     setSavedKw(prev => prev.some(x => x.kw === kw)
@@ -750,6 +852,8 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
         audiencePain, contentGaps, durationSweetSpot,
         // ── Tầng 2 (backend) ──
         autocompleteLongTail, transcriptInsights,
+        // ── Tầng 3 ──
+        trend, redditSignals: redditSignals.map(p => p.title), thumbnailConcept,
       };
       safeDownload(`seo-data-${(competition?.keyword || seed).replace(/\s+/g, "-").slice(0, 30)}-${Date.now()}.json`,
         JSON.stringify(out, null, 2), "application/json");
@@ -782,6 +886,7 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
     setAllTags([]); setAi(null); setSavedKw([]); setCost(0); setErr("");
     setAudiencePain([]); setContentGaps([]); setDurationSweetSpot(null);
     setTranscriptInsights(null); setAutocompleteLongTail([]);
+    setRedditSignals([]); setTrend(null); setThumbnailConcept(null);
     // quotaUsed KHÔNG reset — nó phản ánh quota đã tiêu trong NGÀY, không theo phiên
     showToast("Đã xoá phiên");
   }
@@ -1273,6 +1378,75 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
             </div>
           )}
         </div>
+
+        {/* ═══ PROMPT 7 (Tầng 3): Reddit + Trends + Thumbnail Vision ═══ */}
+        {competition && (
+          <div className="t5-fade" style={{ marginTop: 18 }}>
+            <SectionHead C={C} icon={<TrendingUp size={16} color={C.violet} />} title="Tầng 3 - Reddit, Trends, Thumbnail"
+              open={open.t3 === true} onToggle={() => setOpen(o => ({ ...o, t3: o.t3 !== true }))} />
+            {open.t3 === true && (
+              <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <button onClick={runReddit} disabled={redditBusy || backendOk !== true} title={backendOk !== true ? "Cần backend (mục trên)" : ""} style={{
+                    display: "flex", alignItems: "center", gap: 7, padding: "9px 13px", borderRadius: 9,
+                    background: C.panel, border: `1px solid ${C.border}`, color: backendOk === true ? C.text : C.textDim,
+                    fontSize: 12.5, fontWeight: 600, cursor: (redditBusy || backendOk !== true) ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {redditBusy ? <Loader2 size={14} className="t5-spin" /> : <Users size={14} color={C.amber} />} Reddit signals
+                  </button>
+                  <button onClick={runTrends} disabled={trendBusy || backendOk !== true} title={backendOk !== true ? "Cần backend + pytrends" : ""} style={{
+                    display: "flex", alignItems: "center", gap: 7, padding: "9px 13px", borderRadius: 9,
+                    background: C.panel, border: `1px solid ${C.border}`, color: backendOk === true ? C.text : C.textDim,
+                    fontSize: 12.5, fontWeight: 600, cursor: (trendBusy || backendOk !== true) ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {trendBusy ? <Loader2 size={14} className="t5-spin" /> : <TrendingUp size={14} color={C.green} />} Google Trends
+                  </button>
+                  <button onClick={runThumbnailVision} disabled={thumbBusy} style={{
+                    display: "flex", alignItems: "center", gap: 7, padding: "9px 13px", borderRadius: 9,
+                    background: C.violet + "22", border: `1px solid ${C.violet}`, color: C.text,
+                    fontSize: 12.5, fontWeight: 600, cursor: thumbBusy ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                    {thumbBusy ? <Loader2 size={14} className="t5-spin" /> : <Lightbulb size={14} color={C.violet} />} Thumbnail vision
+                  </button>
+                </div>
+                {backendOk !== true && <div style={{ fontSize: 11, color: C.textDim }}>Reddit/Trends cần backend (bật ở mục trên). Thumbnail vision chạy được ngay (không cần backend).</div>}
+
+                {trend && (
+                  <Block C={C} icon={<TrendingUp size={14} color={C.green} />} title="Xu hướng quan tâm (12 tháng)">
+                    <div style={{ fontSize: 13, color: C.text }}>
+                      Hướng: <b style={{ color: trend.direction === "rising" ? C.green : trend.direction === "falling" ? C.red : C.amber }}>
+                        {trend.direction === "rising" ? "đang lên ↗" : trend.direction === "falling" ? "đang xuống ↘" : trend.direction === "stable" ? "ổn định →" : "không rõ"}</b>
+                      {trend.data?.length > 0 && <span style={{ color: C.textDim, fontSize: 11.5 }}> · {trend.data.length} điểm dữ liệu</span>}
+                    </div>
+                  </Block>
+                )}
+                {redditSignals.length > 0 && (
+                  <Block C={C} icon={<Users size={14} color={C.amber} />} title={`Reddit - ngôn ngữ mạng & nỗi đau (${redditSignals.length})`}>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                      {redditSignals.slice(0, 12).map((p, i) => (
+                        <a key={i} href={p.url} target="_blank" rel="noreferrer" style={{ fontSize: 12.5, color: C.text, textDecoration: "none", lineHeight: 1.4 }}>
+                          <span style={{ color: C.amber, fontFamily: MONO, fontSize: 11 }}>▲{fmtNum(p.score)}</span>{" "}
+                          <span style={{ color: C.textDim, fontSize: 11 }}>r/{p.subreddit}</span>{" "}{p.title}
+                        </a>
+                      ))}
+                    </div>
+                  </Block>
+                )}
+                {thumbnailConcept && (
+                  <Block C={C} icon={<Lightbulb size={14} color={C.violet} />} title="Concept thumbnail">
+                    {thumbnailConcept.commonPatterns && (
+                      <div style={{ fontSize: 12.5, color: C.text, lineHeight: 1.6, marginBottom: 8 }}>
+                        <b style={{ color: C.textDim }}>Mẫu chung: </b>{thumbnailConcept.commonPatterns}
+                      </div>
+                    )}
+                    {thumbnailConcept.differentiationIdea && (
+                      <div style={{ fontSize: 12.5, color: C.text, lineHeight: 1.6, padding: "8px 11px", background: C.violet + "12", borderRadius: 9, border: `1px solid ${C.violetDim}55` }}>
+                        💡 <b>Ý tưởng khác biệt: </b>{thumbnailConcept.differentiationIdea}
+                      </div>
+                    )}
+                  </Block>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* EXPORT BAR */}
         {(competition || savedKw.length > 0) && (

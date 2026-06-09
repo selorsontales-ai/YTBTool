@@ -14,7 +14,10 @@
       "Bash(esbuild Tool5_SEO.jsx --log-level=warning)",
       "Read(//tmp/**)",
       "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 5: Tool 5 Tầng 1 - comments mining + duration sweet-spot + quota counter \\(export v2\\); T2 đọc trường v2\")",
-      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 6: backend FastAPI \\(transcript + autocomplete\\) + Tool 5 nối backend; fix savedKeywords object->kw\")"
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 6: backend FastAPI \\(transcript + autocomplete\\) + Tool 5 nối backend; fix savedKeywords object->kw\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('server/main.py',encoding='utf-8'\\).read\\(\\)\\); print\\('main.py OK'\\)\")",
+      "Bash(py -c \"import ast; ast.parse\\(open\\('server/main.py',encoding='utf-8'\\).read\\(\\)\\); print\\('main.py OK'\\)\")",
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 7A: Tool 5 Tầng 3 - Reddit + Trends \\(backend\\) + thumbnail vision \\(client-side\\)\")"
     ]
   }
 }
