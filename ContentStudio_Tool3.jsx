@@ -523,8 +523,8 @@ export default function ContentStudioTool3() {
 
   /* ── THỰC THI: text_generation → gọi Claude.
      resume=true: viết TIẾP phần dang dở (prefill _result cũ), không làm lại từ đầu. ── */
-  async function runText(p, resume = false) {
-    if (p._busy) return;
+  async function runText(p, resume = false, scriptCtx = "") {
+    if (p._busy) return "";
     setErr("");
     setPrompts(ps => ps.map(x => x.id === p.id ? { ...x, _busy: true, _stream: resume ? (x._result || "") : "" } : x));
 
@@ -535,6 +535,9 @@ export default function ContentStudioTool3() {
     // kho dữ kiện đã nghiên cứu (nếu có) — viết bám vào đây, KHÔNG search lại
     if (p._research && p._research.trim())
       ctxParts.push(`# DỮ KIỆN ĐÃ NGHIÊN CỨU (bám sát; KHÔNG bịa ngoài; KHÔNG lặp lại cùng một ý ở nhiều đoạn trừ khi là thủ pháp nhắc lại có chủ ý)\n${p._research.trim()}`);
+    // chế độ sản xuất theo BỘ: kịch bản đã viết trước → title/mô tả bám sát nó
+    if (scriptCtx && scriptCtx.trim())
+      ctxParts.push(`# KỊCH BẢN ĐÃ VIẾT CHO VIDEO NÀY (bám SÁT nội dung này để đặt tiêu đề/mô tả đúng trọng tâm; KHÔNG tự nghĩ chủ đề khác)\n${scriptCtx.trim().slice(0, 12000)}`);
 
     // đa-file tham chiếu: chỉ dùng file đang BẬT (tiết kiệm token)
     const activeRefs = refFiles.filter(f => f.on && f.content.trim());
@@ -569,7 +572,9 @@ export default function ContentStudioTool3() {
       (p._research && p._research.trim()
         ? `Bám sát "DỮ KIỆN ĐÃ NGHIÊN CỨU"; không bịa thông tin ngoài; tránh lặp lại cùng một ý ở nhiều đoạn.\n` : "") +
       (datas.length
-        ? `Chỉ dùng dữ kiện trong "TÀI LIỆU THAM KHẢO"; nếu thiếu, nói rõ thay vì bịa.\n` : "");
+        ? `Chỉ dùng dữ kiện trong "TÀI LIỆU THAM KHẢO"; nếu thiếu, nói rõ thay vì bịa.\n` : "") +
+      (scriptCtx && scriptCtx.trim()
+        ? `Đây là phần phụ trợ cho một video đã có kịch bản: tiêu đề/mô tả PHẢI phản ánh đúng nội dung "KỊCH BẢN ĐÃ VIẾT", không lệch chủ đề.\n` : "");
 
     const user =
       (ctxParts.length ? ctxParts.join("\n\n") + "\n\n" : "") +
@@ -597,9 +602,41 @@ export default function ContentStudioTool3() {
       if (truncated)
         setErr('⚠ Nội dung chạm max_tokens và bị cắt. Bấm "Viết tiếp" để nối phần còn lại (không tốn token làm lại từ đầu).');
       else showToast(resume ? "Đã viết tiếp xong" : "Đã tạo nội dung");
+      return finalText;
     } catch (e) {
       setErr(String(e.message || e));
       setPrompts(ps => ps.map(x => x.id === p.id ? { ...x, _busy: false } : x));
+      return "";
+    }
+  }
+
+  /* ── SẢN XUẤT THEO BỘ (setId): viết KỊCH BẢN trước → title/mô tả bám kịch bản.
+     Đóng đúng "chế độ đồng bộ" của Tool 2 (các prompt cùng setId = 1 video). ── */
+  const [setBusyId, setSetBusyId] = useState(null);
+  async function runSet(setId) {
+    if (!setId || setBusyId) return;
+    const group = prompts.filter(p => p.setId === setId);
+    const scripts = group.filter(p => !isImageType(p) && p.category === "video_script");
+    const others  = group.filter(p => !isImageType(p) && p.category !== "video_script");
+    if (!scripts.length && !others.length) { setErr("Bộ này không có prompt văn bản để sản xuất."); return; }
+
+    setSetBusyId(setId); setErr("");
+    try {
+      // 1) Viết kịch bản trước (tuần tự, gộp nếu có nhiều)
+      let scriptText = "";
+      for (const s of scripts) {
+        const t = await runText(s, false);
+        if (t) scriptText += (scriptText ? "\n\n" : "") + t;
+      }
+      // 2) Title/mô tả... bám kịch bản vừa viết (nếu không có kịch bản thì chạy thường)
+      for (const o of others) {
+        await runText(o, false, scriptText);
+      }
+      showToast(scriptText ? "Đã sản xuất cả bộ (title/mô tả bám kịch bản)" : "Đã sản xuất cả bộ");
+    } catch (e) {
+      setErr("Sản xuất bộ lỗi: " + String(e.message || e));
+    } finally {
+      setSetBusyId(null);
     }
   }
 
@@ -879,6 +916,8 @@ export default function ContentStudioTool3() {
                 onRemoveRef={removeRefFile}
                 onRun={() => runText(active, false)}
                 onResume={() => runText(active, true)}
+                onRunSet={() => runSet(active.setId)}
+                setBusy={setBusyId === active.setId}
                 onResearch={() => runResearch(active)}
                 onClearResearch={() => clearResearch(active)}
                 onCopy={copyText}
@@ -908,7 +947,7 @@ export default function ContentStudioTool3() {
 /* ════════════════════════ WORKSPACE ════════════════════════ */
 function Workspace({ p, C, advancedOn, setAdvancedOn, editorialOn, setEditorialOn, controls, setVal, rulesName, refFiles,
   onPickRules, onPickRef, onClearRules, onToggleRef, onRemoveRef,
-  onRun, onResume, onResearch, onClearResearch, onCopy, buildImagePrompt }) {
+  onRun, onResume, onRunSet, setBusy, onResearch, onClearResearch, onCopy, buildImagePrompt }) {
   const img = isImageType(p);
   const vals = p._vals || {};
   const imgPrompt = img ? buildImagePrompt(p, vals) : "";
@@ -1074,11 +1113,22 @@ function Workspace({ p, C, advancedOn, setAdvancedOn, editorialOn, setEditorialO
             <BigBtn C={C} primary full
               icon={p._busy ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Play size={16} />}
               label={p._busy ? "Đang tạo nội dung…" : (p._result ? "Tạo lại từ đầu" : "Tạo nội dung")}
-              onClick={onRun} disabled={p._busy} />
+              onClick={onRun} disabled={p._busy || setBusy} />
             {p._truncated && !p._busy && (
               <BigBtn C={C} primary icon={<Play size={16} />} label="Viết tiếp" onClick={onResume} disabled={p._busy} />
             )}
           </div>
+          {p.setId && (
+            <div style={{ marginTop: 9 }}>
+              <BigBtn C={C} full
+                icon={setBusy ? <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> : <Layers size={16} />}
+                label={setBusy ? "Đang sản xuất cả bộ…" : "Sản xuất cả bộ (kịch bản trước → title/mô tả bám theo)"}
+                onClick={onRunSet} disabled={p._busy || setBusy} />
+              <div style={{ fontSize: 11, color: C.textDim, marginTop: 6, lineHeight: 1.5 }}>
+                Chạy mọi prompt văn bản cùng bộ này: viết kịch bản trước, rồi tiêu đề/mô tả được sinh BÁM SÁT kịch bản vừa viết (hết cảnh "title viết mù nội dung").
+              </div>
+            </div>
+          )}
           {p._truncated && !p._busy && (
             <div style={{ fontSize: 11.5, color: "#f0b429", marginTop: 8 }}>
               ⚠ Nội dung bị cắt do chạm max_tokens. "Viết tiếp" sẽ nối phần còn lại (không làm lại từ đầu); "Tạo lại từ đầu" sẽ viết mới hoàn toàn.
