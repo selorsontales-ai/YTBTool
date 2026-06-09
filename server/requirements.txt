@@ -2,5 +2,5 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 youtube-transcript-api>=0.6
 httpx>=0.27
-# Optional (Tầng 3 - Google Trends). Bỏ comment nếu muốn dùng /trends:
+# Optional (Google Trends). Uncomment if you want to use /trends:
 # pytrends>=4.9

@@ -373,6 +373,10 @@ export default function SEOResearcher() {
   const [seed, setSeed]           = useState("");
   const [market, setMarket]       = useState("VN");
 
+  // Channel Profile — context kênh để AI gợi ý bám sát (điền 1 lần/phiên, lưu vào checkpoint)
+  const [profile, setProfile]     = useState({ audience: "", tone: "", niche: "" });
+  const [profileOpen, setProfileOpen] = useState(false);
+
   // Model
   const [modelId, setModelId]     = useState("claude-sonnet-4-6");
   const [effortId, setEffortId]   = useState("medium");
@@ -430,6 +434,15 @@ export default function SEOResearcher() {
 
   const showToast = useCallback((m) => { setToast(m); setTimeout(() => setToast(""), 2200); }, []);
 
+  // Khối Hồ sơ kênh để nhúng vào system prompt các bước AI. Rỗng nếu chưa điền.
+  function profileCtx() {
+    const L = [];
+    if (profile.audience?.trim()) L.push(`- Đối tượng khán giả: ${profile.audience.trim()}`);
+    if (profile.tone?.trim()) L.push(`- Giọng/phong cách kênh: ${profile.tone.trim()}`);
+    if (profile.niche?.trim()) L.push(`- Niche/lĩnh vực: ${profile.niche.trim()}`);
+    return L.length ? `\n\n# HỒ SƠ KÊNH (bám sát để gợi ý đúng chất kênh, KHÔNG generic)\n${L.join("\n")}` : "";
+  }
+
   /* ── Load API key + last state ── */
   useEffect(() => {
     (async () => {
@@ -450,15 +463,16 @@ export default function SEOResearcher() {
 
   const buildSnap = useCallback(() => ({
     version: CHECKPOINT_VERSION, ts: Date.now(),
-    seed, market, modelId, effortId, thinkingOn,
+    seed, market, profile, modelId, effortId, thinkingOn,
     videos, competition, keywordCands, allTags, ai, savedKw, cost,
     quotaUsed, audiencePain, contentGaps, durationSweetSpot,
     backendUrl, transcriptInsights, autocompleteLongTail,
     redditSignals, trend, thumbnailConcept,
-  }), [seed, market, modelId, effortId, thinkingOn, videos, competition, keywordCands, allTags, ai, savedKw, cost, quotaUsed, audiencePain, contentGaps, durationSweetSpot, backendUrl, transcriptInsights, autocompleteLongTail, redditSignals, trend, thumbnailConcept]);
+  }), [seed, market, profile, modelId, effortId, thinkingOn, videos, competition, keywordCands, allTags, ai, savedKw, cost, quotaUsed, audiencePain, contentGaps, durationSweetSpot, backendUrl, transcriptInsights, autocompleteLongTail, redditSignals, trend, thumbnailConcept]);
 
   function applySnap(s) {
     setSeed(s.seed || ""); setMarket(s.market || "VN");
+    if (s.profile && typeof s.profile === "object") setProfile({ audience: "", tone: "", niche: "", ...s.profile });
     if (s.modelId) setModelId(s.modelId);
     if (s.effortId) setEffortId(s.effortId);
     if (typeof s.thinkingOn === "boolean") setThinkingOn(s.thinkingOn);
@@ -581,7 +595,7 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
   "tags": ["12-15 tag, trộn broad + long-tail, từ data thật + mở rộng hợp lý"],
   "extraKeywords": ["8-10 từ khóa long-tail tiềm năng chưa ai khai thác mạnh"],
   "descriptionTemplate": "mẫu mô tả 150-200 từ: 2 câu đầu chứa từ khóa chính, có chỗ chèn timestamp, CTA, hashtag cuối"
-}`;
+}` + profileCtx();
       const user = `TỪ KHÓA GỐC: "${competition.keyword}"
 THỊ TRƯỜNG: ${mk.label}
 OPPORTUNITY SCORE: ${competition.score}/100 (${competition.level}) — ${competition.metrics.smallRatio}% video từ kênh nhỏ, ${competition.metrics.fresh}% video mới <12 tháng, ${competition.metrics.giants}% từ kênh lớn >500k.
@@ -658,7 +672,7 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
 {
   "audiencePain": ["6-10 câu hỏi CHƯA được giải đáp / lời phàn nàn lặp lại / mong muốn khán giả, viết bằng tiếng ${mk.lang === "vi" ? "Việt" : "Anh"}, cụ thể"],
   "contentGaps": ["4-8 chủ đề/góc nhìn mà khán giả MUỐN nhưng video top CHƯA làm tốt - đây là cơ hội nội dung"]
-}`;
+}` + profileCtx();
       const user = `TỪ KHÓA: "${competition.keyword}"\n\nCOMMENT THẬT (${collected.length} video):\n${corpus}`;
 
       const { text, usage } = await callClaude(sys, user, null,
@@ -721,7 +735,7 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
 {
   "commonStructure": "mô tả 3-5 câu: cấu trúc mở bài → thân → kết mà các video top dùng chung (hook kiểu gì, sắp xếp ý ra sao, cách giữ chân)",
   "gaps": ["4-7 điểm các video top BỎ SÓT hoặc làm hời hợt - cơ hội để bạn làm tốt hơn"]
-}`;
+}` + profileCtx();
       const user = `TỪ KHÓA: "${competition.keyword}"\n\nTRANSCRIPT:\n${corpus}`;
       const { text, usage } = await callClaude(sys, user, null, { model: modelId, thinkingOn, effortId, maxTokens: 2500 });
       const parsed = parseJSON(text);
@@ -808,7 +822,7 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
 {
   "commonPatterns": "mô tả 3-5 câu: màu sắc, bố cục, biểu cảm khuôn mặt, text overlay, phong cách CHUNG mà các thumbnail top dùng",
   "differentiationIdea": "1 concept thumbnail TƯƠNG PHẢN để nổi bật giữa đám đông này (màu/bố cục/góc tiếp cận khác biệt)"
-}`;
+}` + profileCtx();
       const { text, usage } = await callClaudeVision(sys, `Từ khóa: "${competition?.keyword || seed}". Phân tích các thumbnail đính kèm.`,
         urls, { model: modelId, thinkingOn, effortId, maxTokens: 1500 });
       const parsed = parseJSON(text);
@@ -848,6 +862,7 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
         keywordCandidates: keywordCands.slice(0, 20).map(k => k.kw),
         realTags: allTags,
         ai: ai || null,
+        channelProfile: [profile.audience, profile.tone, profile.niche].some(x => x?.trim()) ? profile : null,
         // ── Tầng 1 (v2) — chỉ kèm khi có; Tool 2 đọc file v1 (thiếu các trường này) vẫn chạy ──
         audiencePain, contentGaps, durationSweetSpot,
         // ── Tầng 2 (backend) ──
@@ -1015,6 +1030,35 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
               border: `1px solid ${effortId === e.id ? C.tealDim : C.border}`,
               color: effortId === e.id ? "#03100e" : C.textDim }}>{e.label}</button>
           ))}
+        </div>
+
+        {/* CHANNEL PROFILE — context kênh cho AI gợi ý bám sát (tuỳ chọn) */}
+        <div style={{ marginTop: 12, padding: "10px 12px", background: C.panel, border: `1px solid ${C.border}`, borderRadius: 10 }}>
+          <div onClick={() => setProfileOpen(o => !o)} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+            {profileOpen ? <ChevronDown size={14} color={C.textDim} /> : <ChevronRight size={14} color={C.textDim} />}
+            <Users size={14} color={C.violet} />
+            <span style={{ fontSize: 12.5, fontWeight: 600, color: C.text }}>Hồ sơ kênh (tuỳ chọn)</span>
+            <span style={{ fontSize: 11, color: C.textDim }}>
+              {[profile.audience, profile.tone, profile.niche].filter(x => x?.trim()).length}/3 · giúp AI gợi ý đúng chất kênh
+            </span>
+          </div>
+          {profileOpen && (
+            <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+              {[
+                ["audience", "Đối tượng khán giả", "vd: phụ nữ VN 30-45, quan tâm sức khỏe"],
+                ["tone", "Giọng/phong cách", "vd: khoa học nhưng gần gũi, không dùng jargon"],
+                ["niche", "Niche/lĩnh vực", "vd: circadian biology, dinh dưỡng, thói quen"],
+              ].map(([k, label, ph]) => (
+                <div key={k}>
+                  <div style={{ fontSize: 11, color: C.textDim, marginBottom: 4 }}>{label}</div>
+                  <input type="text" value={profile[k]} onChange={e => setProfile(p => ({ ...p, [k]: e.target.value }))}
+                    placeholder={ph}
+                    style={{ width: "100%", padding: "8px 11px", fontSize: 12.5, background: C.bg,
+                      border: `1px solid ${C.border}`, borderRadius: 8, color: C.text, outline: "none" }} />
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* ═══ MODULE 2: COMPETITION (hiện trước vì là "verdict") ═══ */}

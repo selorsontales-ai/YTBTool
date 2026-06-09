@@ -29,7 +29,10 @@
       "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"T2: chống trùng theo keyword cốt lõi \\(coreSig\\) - bắt trùng ý khác chữ ở cả chế độ thường và đồng bộ\")",
       "Bash(esbuild ContentStudio_Tool3.jsx --log-level=warning)",
       "Bash(node -e \"const s=require\\('fs'\\).readFileSync\\('ContentStudio_Tool3.jsx','utf8'\\); console.log\\('runSet:',\\(s.match\\(/runSet/g\\)||[]\\).length,'setBusyId:',\\(s.match\\(/setBusyId/g\\)||[]\\).length\\);\")",
-      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"T3: chế độ sản xuất theo setId - viết kịch bản trước, title/mô tả bám kịch bản \\(runSet\\)\")"
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"T3: chế độ sản xuất theo setId - viết kịch bản trước, title/mô tả bám kịch bản \\(runSet\\)\")",
+      "Bash(grep -nE 'const sys = `|const user = |}\\\\`;$|`;$' Tool5_SEO.jsx)",
+      "Bash(node -e \"const s=require\\('fs'\\).readFileSync\\('Tool5_SEO.jsx','utf8'\\); console.log\\('profileCtx calls:', \\(s.match\\(/profileCtx\\\\\\(\\\\\\)/g\\)||[]\\).length\\);\")",
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"Tool 5: Channel Profile \\(audience/tone/niche\\) nhúng vào mọi bước AI + export channelProfile\")"
     ]
   }
 }
