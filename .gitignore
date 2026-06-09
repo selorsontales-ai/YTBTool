@@ -2,3 +2,7 @@ _reference/
 node_modules/
 hermes-agent-self-evolution/
 .env
+server/.venv/
+server/__pycache__/
+__pycache__/
+*.pyc

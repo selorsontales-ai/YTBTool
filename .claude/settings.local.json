@@ -13,7 +13,8 @@
       "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 3: bộ lọc 2 lớp + 'Lọc & chuẩn hoá theo SEO' \\(Tool 2, ngưỡng 60, panel chờ xác nhận\\)\")",
       "Bash(esbuild Tool5_SEO.jsx --log-level=warning)",
       "Read(//tmp/**)",
-      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 5: Tool 5 Tầng 1 - comments mining + duration sweet-spot + quota counter \\(export v2\\); T2 đọc trường v2\")"
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 5: Tool 5 Tầng 1 - comments mining + duration sweet-spot + quota counter \\(export v2\\); T2 đọc trường v2\")",
+      "Bash(git -c user.name=\"Project\" -c user.email=\"project@local\" commit -q -m \"PROMPT 6: backend FastAPI \\(transcript + autocomplete\\) + Tool 5 nối backend; fix savedKeywords object->kw\")"
     ]
   }
 }

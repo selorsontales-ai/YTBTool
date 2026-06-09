@@ -150,13 +150,17 @@ function buildBlueprintExtras(bp) {
   return `\n# BLUEPRINT MỞ RỘNG (Tool 1 - bám sát để prompt đúng định hướng kênh)\n` + lines.join("\n") + `\n`;
 }
 
+/* savedKeywords của Tool 5 là [{kw,...}]; keywordCandidates/autocomplete là [string].
+   Chuẩn về string an toàn cho cả hai. */
+const seoKwStr = (k) => (typeof k === "string" ? k : (k?.kw || "")).trim();
+
 /* Ráp khối "DỮ LIỆU SEO THẬT" (từ Tool 5) để nhúng vào system prompt khi sinh.
    Chỉ chèn trường thực sự có dữ liệu → tiết kiệm token. Không có seo → "". */
 function buildSeoBlock(seo) {
   if (!seo || typeof seo !== "object") return "";
   const lines = [];
   const ai = seo.ai || {};
-  const prioKw = [...(seo.savedKeywords || []), ...(seo.keywordCandidates || [])].filter(Boolean);
+  const prioKw = [...(seo.savedKeywords || []), ...(seo.keywordCandidates || [])].map(seoKwStr).filter(Boolean);
   if (prioKw.length) lines.push(`- Từ khoá ưu tiên (đưa vào title/description): ${prioKw.join(", ")}`);
   if (Array.isArray(ai.titlePatterns) && ai.titlePatterns.length)
     lines.push(`- Title pattern đã chứng minh hiệu quả: ${ai.titlePatterns.join(" | ")}`);
@@ -286,7 +290,8 @@ function collectSeoKeywords(seo) {
     ...(seo.savedKeywords || []),
     ...(seo.keywordCandidates || []),
     ...(seo.ai?.extraKeywords || []),
-  ].map(k => String(k || "").trim()).filter(Boolean);
+    ...(seo.autocompleteLongTail || []),
+  ].map(seoKwStr).filter(Boolean);
   return [...new Set(all)];
 }
 

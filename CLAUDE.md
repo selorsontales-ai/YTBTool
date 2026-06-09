@@ -68,6 +68,6 @@ Một bộ 5 công cụ (React/JSX) hỗ trợ sản xuất nội dung YouTube *
 - [ ] T2: chống trùng theo keyword cốt lõi (không chỉ norm(title))
 - [ ] T3: chế độ sản xuất theo setId (script trước → title/desc bám script)
 - [x] T5 Tầng 1: comments mining + duration sweet-spot + quota counter (client-side, export tool5-seo-v2; T2 đọc audiencePain/contentGaps/durationSweetSpot)
-- [ ] T5 Tầng 2: backend transcript + autocomplete
+- [x] T5 Tầng 2: backend transcript + autocomplete (FastAPI trong server/; Tool 5 có mục Backend URL + Kiểm tra; export thêm transcriptInsights/autocompleteLongTail)
 - [ ] T5 Tầng 3: Reddit + Trends + thumbnail vision
 - [ ] T4: thêm vai phản biện; vòng lặp về T2/T3

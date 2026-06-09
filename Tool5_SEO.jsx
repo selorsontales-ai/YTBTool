@@ -376,6 +376,15 @@ export default function SEOResearcher() {
   const [contentGaps, setContentGaps]     = useState([]);  // chủ đề top chưa nhắc tới
   const [durationSweetSpot, setDurationSweetSpot] = useState(null);
 
+  // ── PROMPT 6: backend (transcript + autocomplete) ──
+  const [backendUrl, setBackendUrl]       = useState("http://localhost:8000");
+  const [backendOk, setBackendOk]         = useState(null); // null=chưa kiểm tra, true/false
+  const [backendBusy, setBackendBusy]     = useState(false);
+  const [transcriptBusy, setTranscriptBusy]   = useState(false);
+  const [transcriptInsights, setTranscriptInsights] = useState(null); // {commonStructure, gaps[]}
+  const [autocompleteBusy, setAutocompleteBusy]     = useState(false);
+  const [autocompleteLongTail, setAutocompleteLongTail] = useState([]);
+
   // UI
   const [err, setErr]             = useState("");
   const [toast, setToast]         = useState("");
@@ -411,7 +420,8 @@ export default function SEOResearcher() {
     seed, market, modelId, effortId, thinkingOn,
     videos, competition, keywordCands, allTags, ai, savedKw, cost,
     quotaUsed, audiencePain, contentGaps, durationSweetSpot,
-  }), [seed, market, modelId, effortId, thinkingOn, videos, competition, keywordCands, allTags, ai, savedKw, cost, quotaUsed, audiencePain, contentGaps, durationSweetSpot]);
+    backendUrl, transcriptInsights, autocompleteLongTail,
+  }), [seed, market, modelId, effortId, thinkingOn, videos, competition, keywordCands, allTags, ai, savedKw, cost, quotaUsed, audiencePain, contentGaps, durationSweetSpot, backendUrl, transcriptInsights, autocompleteLongTail]);
 
   function applySnap(s) {
     setSeed(s.seed || ""); setMarket(s.market || "VN");
@@ -425,6 +435,9 @@ export default function SEOResearcher() {
     setQuotaUsed(s.quotaUsed || 0);
     setAudiencePain(s.audiencePain || []); setContentGaps(s.contentGaps || []);
     setDurationSweetSpot(s.durationSweetSpot || null);
+    if (s.backendUrl) setBackendUrl(s.backendUrl);
+    setTranscriptInsights(s.transcriptInsights || null);
+    setAutocompleteLongTail(s.autocompleteLongTail || []);
   }
   const bumpQuota = (n) => setQuotaUsed(x => x + n);
 
@@ -627,6 +640,88 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
     }
   }
 
+  /* ════════════════════════════════════════════════════════════════════
+     PROMPT 6 — BACKEND: transcript + autocomplete (cần server/ chạy).
+     Hỏng/không bật → tính năng ẩn gọn, phần còn lại của tool vẫn chạy.
+     ════════════════════════════════════════════════════════════════════ */
+  const apiBase = () => backendUrl.replace(/\/+$/, "");
+
+  async function checkBackend() {
+    setBackendBusy(true); setErr("");
+    try {
+      const r = await fetch(`${apiBase()}/health`, { method: "GET" });
+      const ok = r.ok && (await r.json())?.ok === true;
+      setBackendOk(!!ok);
+      showToast(ok ? "Backend đang chạy" : "Backend phản hồi nhưng không hợp lệ");
+    } catch {
+      setBackendOk(false);
+      setErr(`Không kết nối được backend tại ${apiBase()}. Chạy server/ chưa? (xem server/README.md)`);
+    } finally {
+      setBackendBusy(false);
+    }
+  }
+
+  async function runTranscriptInsights() {
+    if (transcriptBusy) return;
+    if (!competition || !videos.length) { setErr("Chạy nghiên cứu trước đã"); return; }
+    setTranscriptBusy(true); setErr("");
+    try {
+      const targets = videos.slice(0, 3);
+      const scripts = [];
+      let failed = 0;
+      for (const v of targets) {
+        try {
+          const r = await fetch(`${apiBase()}/transcript?videoId=${encodeURIComponent(v.videoId)}&lang=${mk.lang},en`);
+          if (!r.ok) { failed++; continue; }
+          const d = await r.json();
+          if (d.text) scripts.push({ title: v.title, text: d.text.slice(0, 6000) });
+        } catch { failed++; }
+      }
+      if (!scripts.length) { setErr(`Không lấy được transcript nào (${failed} video không có phụ đề hoặc backend lỗi).`); setTranscriptBusy(false); return; }
+
+      const corpus = scripts.map((s, i) => `### Video ${i + 1}: ${s.title}\n${s.text}`).join("\n\n").slice(0, 20000);
+      const sys = `Bạn là chuyên gia reverse-engineering nội dung YouTube. Dưới đây là transcript thật của ${scripts.length} video top đang rank. Phân tích cấu trúc kịch bản chung + content gap.
+TRẢ JSON THUẦN, KHÔNG BACKTICKS:
+{
+  "commonStructure": "mô tả 3-5 câu: cấu trúc mở bài → thân → kết mà các video top dùng chung (hook kiểu gì, sắp xếp ý ra sao, cách giữ chân)",
+  "gaps": ["4-7 điểm các video top BỎ SÓT hoặc làm hời hợt - cơ hội để bạn làm tốt hơn"]
+}`;
+      const user = `TỪ KHÓA: "${competition.keyword}"\n\nTRANSCRIPT:\n${corpus}`;
+      const { text, usage } = await callClaude(sys, user, null, { model: modelId, thinkingOn, effortId, maxTokens: 2500 });
+      const parsed = parseJSON(text);
+      if (!parsed) throw new Error("Không parse được kết quả AI");
+      setTranscriptInsights({
+        commonStructure: String(parsed.commonStructure || ""),
+        gaps: Array.isArray(parsed.gaps) ? parsed.gaps : [],
+      });
+      const c = costOf(modelId, usage); setCost(x => x + c);
+      showToast(`Phân tích transcript xong: ${scripts.length} video (+$${c.toFixed(4)})`);
+    } catch (e) {
+      setErr("Transcript lỗi: " + String(e.message || e));
+    } finally {
+      setTranscriptBusy(false);
+    }
+  }
+
+  async function runAutocomplete() {
+    if (autocompleteBusy) return;
+    const q = (competition?.keyword || seed).trim();
+    if (!q) { setErr("Nhập chủ đề trước"); return; }
+    setAutocompleteBusy(true); setErr("");
+    try {
+      const r = await fetch(`${apiBase()}/autocomplete?q=${encodeURIComponent(q)}&lang=${mk.lang}`);
+      if (!r.ok) throw new Error(`Backend ${r.status}`);
+      const d = await r.json();
+      const list = (d.suggestions || []).filter(s => s && s.toLowerCase() !== q.toLowerCase());
+      setAutocompleteLongTail(list);
+      showToast(`Autocomplete: ${list.length} gợi ý long-tail`);
+    } catch (e) {
+      setErr("Autocomplete lỗi: " + String(e.message || e) + ` (backend tại ${apiBase()} có chạy không?)`);
+    } finally {
+      setAutocompleteBusy(false);
+    }
+  }
+
   /* ── Lưu/bỏ từ khóa vào giỏ export ── */
   function toggleSaveKw(kw, opportunity, level) {
     setSavedKw(prev => prev.some(x => x.kw === kw)
@@ -653,6 +748,8 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
         ai: ai || null,
         // ── Tầng 1 (v2) — chỉ kèm khi có; Tool 2 đọc file v1 (thiếu các trường này) vẫn chạy ──
         audiencePain, contentGaps, durationSweetSpot,
+        // ── Tầng 2 (backend) ──
+        autocompleteLongTail, transcriptInsights,
       };
       safeDownload(`seo-data-${(competition?.keyword || seed).replace(/\s+/g, "-").slice(0, 30)}-${Date.now()}.json`,
         JSON.stringify(out, null, 2), "application/json");
@@ -684,6 +781,7 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
     setSeed(""); setVideos([]); setCompetition(null); setKeywordCands([]);
     setAllTags([]); setAi(null); setSavedKw([]); setCost(0); setErr("");
     setAudiencePain([]); setContentGaps([]); setDurationSweetSpot(null);
+    setTranscriptInsights(null); setAutocompleteLongTail([]);
     // quotaUsed KHÔNG reset — nó phản ánh quota đã tiêu trong NGÀY, không theo phiên
     showToast("Đã xoá phiên");
   }
@@ -1089,6 +1187,92 @@ TRẢ JSON THUẦN, KHÔNG BACKTICKS:
             )}
           </div>
         )}
+
+        {/* ═══ PROMPT 6: BACKEND (transcript + autocomplete) ═══ */}
+        <div className="t5-fade" style={{ marginTop: 18 }}>
+          <SectionHead C={C} icon={<Play size={16} color={C.green} />} title="Backend - transcript + autocomplete (Tầng 2)"
+            open={open.be === true} onToggle={() => setOpen(o => ({ ...o, be: o.be !== true }))} />
+          {open.be === true && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 11.5, color: C.textDim, marginBottom: 10, lineHeight: 1.6 }}>
+                Cần chạy server cục bộ (xem <span style={{ fontFamily: MONO, color: C.text }}>server/README.md</span>). Backend lấy transcript video người khác (reverse-engineer cấu trúc kịch bản) và autocomplete long-tail mà browser không làm được.
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 12 }}>
+                <input type="text" value={backendUrl} onChange={e => { setBackendUrl(e.target.value); setBackendOk(null); }}
+                  placeholder="http://localhost:8000"
+                  style={{ flex: 1, minWidth: 200, padding: "8px 11px", fontSize: 12.5, background: C.bg,
+                    border: `1px solid ${backendOk === true ? C.green : backendOk === false ? C.red : C.border}`,
+                    borderRadius: 9, color: C.text, outline: "none", fontFamily: MONO }} />
+                <button onClick={checkBackend} disabled={backendBusy} style={{
+                  display: "flex", alignItems: "center", gap: 6, padding: "8px 14px", borderRadius: 9,
+                  background: C.panel2, border: `1px solid ${C.border}`, color: C.text,
+                  fontSize: 12.5, cursor: backendBusy ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                  {backendBusy ? <Loader2 size={14} className="t5-spin" /> : <RefreshCw size={14} />} Kiểm tra
+                </button>
+                {backendOk === true && <Pill C={C} icon={<Check size={13} />} text="Online" color={C.green} />}
+                {backendOk === false && <Pill C={C} icon={<X size={13} />} text="Không kết nối" color={C.red} />}
+              </div>
+
+              {backendOk === true && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {/* TRANSCRIPT */}
+                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    <button onClick={runTranscriptInsights} disabled={transcriptBusy || !competition} style={{
+                      display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", borderRadius: 9,
+                      background: C.green + "22", border: `1px solid ${C.green}`, color: C.text,
+                      fontSize: 13, fontWeight: 600, cursor: (transcriptBusy || !competition) ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                      {transcriptBusy ? <Loader2 size={14} className="t5-spin" /> : <FileText size={14} color={C.green} />}
+                      {transcriptBusy ? "Đang phân tích…" : "Lấy transcript top 3 + phân tích"}
+                    </button>
+                    <button onClick={runAutocomplete} disabled={autocompleteBusy} style={{
+                      display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", borderRadius: 9,
+                      background: C.blue + "22", border: `1px solid ${C.blue}`, color: C.text,
+                      fontSize: 13, fontWeight: 600, cursor: autocompleteBusy ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                      {autocompleteBusy ? <Loader2 size={14} className="t5-spin" /> : <Search size={14} color={C.blue} />}
+                      {autocompleteBusy ? "Đang lấy…" : "Autocomplete long-tail"}
+                    </button>
+                  </div>
+
+                  {transcriptInsights && (
+                    <Block C={C} icon={<FileText size={14} color={C.green} />} title="Cấu trúc kịch bản video top">
+                      {transcriptInsights.commonStructure && (
+                        <div style={{ fontSize: 12.5, color: C.text, lineHeight: 1.6, marginBottom: transcriptInsights.gaps?.length ? 10 : 0 }}>
+                          {transcriptInsights.commonStructure}
+                        </div>
+                      )}
+                      {transcriptInsights.gaps?.length > 0 && (
+                        <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+                          <div style={{ fontSize: 11.5, color: C.textDim, fontWeight: 600 }}>Điểm bỏ sót (cơ hội):</div>
+                          {transcriptInsights.gaps.map((g, i) => (
+                            <div key={i} style={{ fontSize: 12.5, color: C.text, lineHeight: 1.5, paddingLeft: 14, position: "relative" }}>
+                              <span style={{ position: "absolute", left: 0, color: C.green }}>•</span>{g}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </Block>
+                  )}
+
+                  {autocompleteLongTail.length > 0 && (
+                    <Block C={C} icon={<Search size={14} color={C.blue} />} title={`Long-tail từ autocomplete (${autocompleteLongTail.length})`}>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+                        {autocompleteLongTail.map((k, i) => (
+                          <button key={i} onClick={() => toggleSaveKw(k, null, "")} style={{
+                            display: "flex", alignItems: "center", gap: 5, padding: "5px 10px", borderRadius: 20, cursor: "pointer",
+                            background: isSaved(k) ? C.tealDim : C.panel, fontFamily: FONT,
+                            border: `1px solid ${isSaved(k) ? C.tealDim : C.border}`,
+                            color: isSaved(k) ? "#03100e" : C.text, fontSize: 12 }}>
+                            {isSaved(k) ? <Check size={11} /> : <Tag size={11} color={C.blue} />}{k}
+                          </button>
+                        ))}
+                      </div>
+                    </Block>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* EXPORT BAR */}
         {(competition || savedKw.length > 0) && (
