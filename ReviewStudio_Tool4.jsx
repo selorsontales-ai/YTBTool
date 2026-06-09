@@ -490,13 +490,17 @@ async function callClaude(system, user, onChunk, cfg = {}) {
 
 /* ════════════════════════════════════════════════════════════════════
    PARSER cho file import từ Tool 3
-   - MD: file 1 hoặc nhiều bài cách nhau bằng "---"
+   - MD: file 1 hoặc nhiều bài cách nhau bằng "<!-- ARTICLE_BREAK -->" (cũ: "---")
    - JSON: checkpoint Tool 3, có prompts[].result
    ════════════════════════════════════════════════════════════════════ */
 
 function parseMDImport(content) {
-  // tách theo "---" (heading frontmatter trên dưới hoặc separator)
-  const sections = content.split(/\n---+\n/);
+  // Ưu tiên tách theo marker mới "<!-- ARTICLE_BREAK -->" (Tool 3 v2).
+  // Tương thích ngược: file cũ không có marker thì fallback tách theo "---".
+  const hasMarker = content.includes("<!-- ARTICLE_BREAK -->");
+  const sections = hasMarker
+    ? content.split(/\s*<!--\s*ARTICLE_BREAK\s*-->\s*/)
+    : content.split(/\n---+\n/);
   const articles = [];
   sections.forEach((sec, i) => {
     const trimmed = sec.trim();

@@ -641,7 +641,7 @@ export default function ContentStudioTool3() {
       for (const p of done) {
         md += `## ${p.title}\n\n*${p.categoryLabel}*\n\n`;
         if (isImageType(p)) md += "```\n" + buildImagePrompt(p, p._vals || initVals(p)) + "\n```\n\n";
-        else md += (p._result || "") + "\n\n---\n\n";
+        else md += (p._result || "") + "\n\n<!-- ARTICLE_BREAK -->\n\n";
       }
       safeDownload(`noi-dung-${Date.now()}.md`, md, "text/markdown");
       showToast("Đã export Markdown");
